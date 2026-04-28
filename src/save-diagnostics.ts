@@ -9,6 +9,8 @@ export interface QueueResult {
   warnings: QueueWarning[]
 }
 
+const SETTLE_AFTER_REPLY_MS = 260
+
 function extractErrorCode(text: string): number | null {
   const hits = [...text.matchAll(/Error\s*(-?\d+)/gi)]
   if (!hits.length) return null
@@ -41,6 +43,10 @@ function commandHint(command: string, errorCode: number): string {
   return ''
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export async function runQueueWithFirmwareDiagnostics(
   s: RadarSession,
   cmds: string[],
@@ -50,8 +56,13 @@ export async function runQueueWithFirmwareDiagnostics(
   s.clearRxLog()
   for (let i = 0; i < cmds.length; i++) {
     const cmd = cmds[i]!
+    const startLen = s.rxLog.length
     await s.enqueueWrite(cmd)
-    const reply = await s.waitForText(/Done|Error\s*-?\d*/i, waitMs).catch(() => '')
+    await s.waitForText(/Done|Error\s*-?\d*/i, waitMs).catch(() => {})
+    // Some firmwares emit "Done", then immediately append "Error -1".
+    // Give notify stream a brief settle window and judge on the full delta.
+    await sleep(SETTLE_AFTER_REPLY_MS)
+    const reply = s.rxLog.slice(startLen)
     const errorCode = extractErrorCode(reply)
     if (errorCode === null) continue
 
