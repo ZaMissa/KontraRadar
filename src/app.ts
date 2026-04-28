@@ -73,6 +73,13 @@ let targetMapRaf = 0
 let targetMapCanvas: HTMLCanvasElement | null = null
 let rxUnsub: (() => void) | null = null
 
+function buildStamp(): string {
+  const ts = Number.isNaN(Date.parse(__APP_BUILT_AT__))
+    ? __APP_BUILT_AT__
+    : new Date(__APP_BUILT_AT__).toLocaleString()
+  return `v${__APP_VERSION__} · ${__APP_COMMIT__} · ${ts}`
+}
+
 function titleFor(r: Route): string {
   const titles: Record<Route, string> = {
     connect: 'Connect',
@@ -118,6 +125,7 @@ function statusStrip(route: Route): string {
         ${sess?.connected ? 'BLE connected' : 'BLE offline'}
       </span>
       <span class="status-line">${line}</span>
+      <span class="status-version" title="App version · commit · build time">${escapeHtml(buildStamp())}</span>
     </div>
   `
 }

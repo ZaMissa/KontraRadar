@@ -136,6 +136,14 @@ body {
   text-overflow: ellipsis;
 }
 
+.status-version {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
 .header-spacer,
 .btn-back {
   width: 40px;
