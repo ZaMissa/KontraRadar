@@ -6,9 +6,64 @@ let benchRxUnsub: (() => void) | null = null
 let benchPaused = false
 let benchAutoscroll = true
 let benchEvents = ''
+let exportDirHandle: FileSystemDirectoryHandle | null = null
+const EXPORT_SUBDIR = 'bench-reports'
+const DB_NAME = 'radar-pwa-fs'
+const DB_STORE = 'handles'
+const DB_KEY_EXPORT_DIR = 'benchExportDir'
 
 function nowStamp(): string {
   return new Date().toLocaleString()
+}
+
+function openHandleDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function saveExportDirHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openHandleDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite')
+    tx.objectStore(DB_STORE).put(handle, DB_KEY_EXPORT_DIR)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+  db.close()
+}
+
+async function loadExportDirHandle(): Promise<FileSystemDirectoryHandle | null> {
+  const db = await openHandleDb()
+  const out = await new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly')
+    const req = tx.objectStore(DB_STORE).get(DB_KEY_EXPORT_DIR)
+    req.onsuccess = () => resolve((req.result as FileSystemDirectoryHandle | undefined) ?? null)
+    req.onerror = () => reject(req.error)
+  })
+  db.close()
+  return out
+}
+
+async function ensureExportSubdir(): Promise<FileSystemDirectoryHandle | null> {
+  if (!exportDirHandle) return null
+  const permApi = exportDirHandle as unknown as {
+    queryPermission?: (opts: { mode: 'readwrite' }) => Promise<PermissionState>
+  }
+  const perm = permApi.queryPermission ? await permApi.queryPermission({ mode: 'readwrite' }) : 'granted'
+  if (perm !== 'granted') return null
+  return exportDirHandle.getDirectoryHandle(EXPORT_SUBDIR, { create: true })
+}
+
+function setExportPathLabel(s: string): void {
+  const el = document.getElementById('bench-export-path')
+  if (el) el.textContent = s
 }
 
 function appendEvent(line: string): void {
@@ -18,6 +73,14 @@ function appendEvent(line: string): void {
     pre.textContent = benchEvents || '—'
     pre.scrollTop = pre.scrollHeight
   }
+}
+
+function extractSerialFromText(t: string): string {
+  const m1 = t.match(/Gate-([A-Za-z0-9._-]+):\/>/)
+  if (m1?.[1]) return m1[1]
+  const m2 = t.match(/79G[-\s]?Radar[-\s]?([A-Za-z0-9._-]+)/i)
+  if (m2?.[1]) return m2[1]
+  return ''
 }
 
 function setRunStatus(id: string, v: 'idle' | 'running' | 'ok' | 'fail'): void {
@@ -68,6 +131,14 @@ async function runBaselineCapture(): Promise<void> {
     await s.enqueueWrite('ReadRadeConfig 2')
     await s.waitForText(/Done/i, 15000)
     syncBenchRx()
+    const serialInput = document.getElementById('bench-serial') as HTMLInputElement | null
+    if (serialInput && !serialInput.value.trim()) {
+      const guessed = extractSerialFromText(s.rxLog || '') || extractSerialFromText(s.meta?.deviceName || '')
+      if (guessed) {
+        serialInput.value = guessed
+        appendEvent(`Serial auto-detected: ${guessed}`)
+      }
+    }
     appendEvent('Step 1 baseline capture completed')
     setRunStatus('bench-step1-status', 'ok')
   } catch (e) {
@@ -132,6 +203,16 @@ function downloadText(filename: string, content: string): void {
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function saveTextToPickedFolder(filename: string, content: string): Promise<boolean> {
+  const dir = await ensureExportSubdir()
+  if (!dir) return false
+  const fileHandle = await dir.getFileHandle(filename, { create: true })
+  const writable = await fileHandle.createWritable()
+  await writable.write(content)
+  await writable.close()
+  return true
 }
 
 function buildReportText(): string {
@@ -202,6 +283,11 @@ export function pageBenchLabHtml(): string {
       </div>
 
       <div class="card row gap wrap">
+        <button class="btn btn-secondary" id="bench-set-folder">Set export folder</button>
+        <span class="hint" id="bench-export-path">Export target: browser download</span>
+      </div>
+
+      <div class="card row gap wrap">
         <label class="row gap align-center hint" style="margin:0">
           <input type="checkbox" id="bench-autoscroll" checked />
           <span>Autoscroll</span>
@@ -223,6 +309,23 @@ export function bindBenchLabPage(): void {
   benchPaused = false
   benchAutoscroll = true
   updateBleStatus()
+  void (async () => {
+    try {
+      exportDirHandle = await loadExportDirHandle()
+      if (exportDirHandle) {
+        const permApi = exportDirHandle as unknown as {
+          queryPermission?: (opts: { mode: 'readwrite' }) => Promise<PermissionState>
+        }
+        const perm = permApi.queryPermission ? await permApi.queryPermission({ mode: 'readwrite' }) : 'granted'
+        if (perm === 'granted') setExportPathLabel(`Export target: chosen folder/${EXPORT_SUBDIR}`)
+        else setExportPathLabel('Export target: chosen folder (permission needed)')
+      } else {
+        setExportPathLabel('Export target: browser download')
+      }
+    } catch {
+      setExportPathLabel('Export target: browser download')
+    }
+  })()
   const s = getActiveSession()
   if (s) {
     const pre = document.getElementById('bench-rx')
@@ -298,15 +401,69 @@ export function bindBenchLabPage(): void {
     appendEvent('RX log cleared')
   })
   document.getElementById('bench-export-raw')?.addEventListener('click', () => {
-    const serial = (document.getElementById('bench-serial') as HTMLInputElement | null)?.value?.trim() || 'unknown'
-    const txt = (document.getElementById('bench-rx')?.textContent || '').trim()
-    downloadText(`bench-raw-${serial}-${Date.now()}.txt`, txt)
-    toast('Raw log exported')
+    void (async () => {
+      const serial = (document.getElementById('bench-serial') as HTMLInputElement | null)?.value?.trim() || 'unknown'
+      const txt = (document.getElementById('bench-rx')?.textContent || '').trim()
+      const name = `bench-raw-${serial}-${Date.now()}.txt`
+      try {
+        if (await saveTextToPickedFolder(name, txt)) {
+          toast('Raw log saved to chosen folder')
+        } else {
+          downloadText(name, txt)
+          toast('Raw log downloaded')
+        }
+      } catch {
+        downloadText(name, txt)
+        toast('Folder save failed, downloaded instead', false)
+      }
+    })()
   })
   document.getElementById('bench-export-report')?.addEventListener('click', () => {
-    const serial = (document.getElementById('bench-serial') as HTMLInputElement | null)?.value?.trim() || 'unknown'
-    downloadText(`bench-report-${serial}-${Date.now()}.txt`, buildReportText())
-    toast('Report exported')
+    void (async () => {
+      const serial = (document.getElementById('bench-serial') as HTMLInputElement | null)?.value?.trim() || 'unknown'
+      const content = buildReportText()
+      const name = `bench-report-${serial}-${Date.now()}.txt`
+      try {
+        if (await saveTextToPickedFolder(name, content)) {
+          toast('Report saved to chosen folder')
+        } else {
+          downloadText(name, content)
+          toast('Report downloaded')
+        }
+      } catch {
+        downloadText(name, content)
+        toast('Folder save failed, downloaded instead', false)
+      }
+    })()
+  })
+
+  document.getElementById('bench-set-folder')?.addEventListener('click', () => {
+    void (async () => {
+      if (!(window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker) {
+        toast('Folder picker not supported in this browser', false)
+        return
+      }
+      try {
+        const handle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> })
+          .showDirectoryPicker()
+        const reqApi = handle as unknown as {
+          requestPermission?: (opts: { mode: 'readwrite' }) => Promise<PermissionState>
+        }
+        const perm = reqApi.requestPermission ? await reqApi.requestPermission({ mode: 'readwrite' }) : 'granted'
+        if (perm !== 'granted') {
+          toast('Folder permission denied', false)
+          return
+        }
+        exportDirHandle = handle
+        await saveExportDirHandle(handle)
+        await handle.getDirectoryHandle(EXPORT_SUBDIR, { create: true })
+        setExportPathLabel(`Export target: chosen folder/${EXPORT_SUBDIR}`)
+        appendEvent(`Export folder set: ${EXPORT_SUBDIR}`)
+        toast('Export folder configured')
+      } catch (e) {
+        if ((e as Error)?.name !== 'AbortError') toast('Failed to set folder', false)
+      }
+    })()
   })
 
   if (benchRxUnsub) benchRxUnsub()
