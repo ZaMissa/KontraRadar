@@ -1,0 +1,19 @@
+{
+  "name": "radar-pwa",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "4.60.2",
+    "@types/web-bluetooth": "^0.0.21",
+    "typescript": "~6.0.2",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
+  }
+}
