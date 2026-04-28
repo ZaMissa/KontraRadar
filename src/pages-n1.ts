@@ -197,6 +197,17 @@ export function pageAdvancedHtml(): string {
             <input type="text" id="adv-slon" value="1000 60" /></label>
         </div>
       </details>
+      <details class="card details-block">
+        <summary>Readback-only blocks (RainVal / isCarCFG)</summary>
+        <div class="details-body stack">
+          <p class="hint">Captured from ReadRadeConfig as raw text for analysis. These blocks are not edited/saved by this form yet.</p>
+          <label class="field"><span class="field-label">RainVal [&lt;3.5]</span><textarea id="adv-rain-lt35" rows="2" placeholder="readback value"></textarea></label>
+          <label class="field"><span class="field-label">RainVal [&gt;3.5]</span><textarea id="adv-rain-gt35" rows="2" placeholder="readback value"></textarea></label>
+          <label class="field"><span class="field-label">isCarCFG [01]</span><textarea id="adv-ic1" rows="2" placeholder="readback value"></textarea></label>
+          <label class="field"><span class="field-label">isCarCFG [02]</span><textarea id="adv-ic2" rows="2" placeholder="readback value"></textarea></label>
+          <label class="field"><span class="field-label">isCarCFG [03]</span><textarea id="adv-ic3" rows="2" placeholder="readback value"></textarea></label>
+        </div>
+      </details>
       <p class="hint">${collapseHelpWs(advanced.actions)}</p>
       <div class="card row gap wrap">
         <button type="button" class="btn btn-secondary flex-1" id="adv-read">Read ReadRadeConfig 2</button>
@@ -341,6 +352,11 @@ export function applyParsedAdvancedToForm(parsed: ParsedAdvancedConfig): number 
   setStr('adv-c3', p.cut3)
   setStr('adv-c4', p.cut4)
   setStr('adv-slon', p.singleLightOn)
+  setStr('adv-rain-lt35', p.rainLt35)
+  setStr('adv-rain-gt35', p.rainGt35)
+  setStr('adv-ic1', p.isCarCfg01)
+  setStr('adv-ic2', p.isCarCfg02)
+  setStr('adv-ic3', p.isCarCfg03)
 
   syncAdvPresetBlurb()
   return keys

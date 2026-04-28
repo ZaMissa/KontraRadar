@@ -323,7 +323,7 @@ function pageConfigure(): string {
         </label>
         <label class="field">
           <span class="field-label">Near-range ignore</span>
-          <input type="range" id="near" min="10" max="100" step="10" value="10" />
+          <input type="range" id="near" min="1" max="100" step="1" value="10" />
           <span class="hint">Value <span id="near-lbl">10</span> — same scale as vendor “near no-detect” distance.</span>
         </label>
         <p class="hint">${collapseHelpWs(configure.barrierLayout)}</p>

@@ -31,6 +31,12 @@ describe('parseReadRadeConfigToConfigure', () => {
     expect(p.nearNoDetect).toBe(40)
     expect(p._fields?.length).toBeGreaterThan(0)
   })
+
+  it('keeps exact YLimit width from spaced key format', () => {
+    const raw = `YLimit   Width: 15`
+    const p = parseReadRadeConfigToConfigure(raw)
+    expect(p.nearNoDetect).toBe(15)
+  })
 })
 
 describe('parseReadRadeConfigToAdvanced', () => {
@@ -45,6 +51,27 @@ describe('parseReadRadeConfigToAdvanced', () => {
     const raw = 'GateRelay: 0 1'
     const p = parseReadRadeConfigToAdvanced(raw, 'BR7901A', 30)
     expect(p.gateGpio).toBe(0)
+  })
+
+  it('parses spaced key variants and raw blocks', () => {
+    const raw = `
+      Judge   Switch: 0
+      Direction Ctrl: 3
+      GateRelay Flag: 1
+      Sensitive Info: 2 2 2 7
+      Set Mid  Width: 0 40 10
+      RainVal [<3.5]: 5000 9500
+      isCarCFG  [01]: 1 2 3
+    `
+    const p = parseReadRadeConfigToAdvanced(raw, 'BR7901A', 30)
+    expect(p.judgeTarActive).toBe(2)
+    expect(p.passDirection).toBe(3)
+    expect(p.gateGpio).toBe(1)
+    expect(p.levelValue).toBe('2 2 2')
+    expect(p.lMid).toBe(40)
+    expect(p.rMid).toBe(10)
+    expect(p.rainLt35).toContain('5000')
+    expect(p.isCarCfg01).toContain('1 2 3')
   })
 })
 

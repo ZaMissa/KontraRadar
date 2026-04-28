@@ -80,7 +80,15 @@ function parseGateTimeParamLightSec(line: string): number | undefined {
   return Math.floor(ms / 1000)
 }
 
-export type ParsedAdvancedConfig = Partial<AdvancedFormSnapshot> & { _fields?: string[] }
+export type ParsedAdvancedConfig = Partial<AdvancedFormSnapshot> & ParsedReadExtraBlocks & { _fields?: string[] }
+
+export interface ParsedReadExtraBlocks {
+  rainLt35?: string
+  rainGt35?: string
+  isCarCfg01?: string
+  isCarCfg02?: string
+  isCarCfg03?: string
+}
 
 /** Configure tab (`pages/config/configure` in n1) — subset of `setfalg` on read. */
 export interface ParsedConfigureForm {
@@ -91,6 +99,11 @@ export interface ParsedConfigureForm {
   nearNoDetect?: number
   levelIndex?: 1 | 2 | 3 | 4 | 5
   _fields?: string[]
+}
+
+function normalizedHeadKey(line: string): string {
+  const h = (line.split(':')[0] || '').toLowerCase()
+  return h.replace(/[^a-z0-9]/g, '')
 }
 
 function clampPoleTypeId(n: number): 1 | 2 | 3 {
@@ -112,9 +125,10 @@ export function parseReadRadeConfigToConfigure(raw: string): ParsedConfigureForm
 
   for (const line of lines) {
     const compact = line.replace(/\s+/g, '')
+    const key = normalizedHeadKey(line)
     const rawLine = line
 
-    if (compact.includes('GateFixation')) {
+    if (compact.includes('GateFixation') || key.includes('gatefixation')) {
       const n = parseInt(afterFirstColon(line), 10)
       if (n === 1 || n === 2) {
         out.orientation = n
@@ -122,7 +136,7 @@ export function parseReadRadeConfigToConfigure(raw: string): ParsedConfigureForm
       }
       continue
     }
-    if (compact.includes('GatePoleType')) {
+    if (compact.includes('GatePoleType') || key.includes('gatepoletype')) {
       const n = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(n)) {
         out.poleTypeId = clampPoleTypeId(n)
@@ -130,7 +144,7 @@ export function parseReadRadeConfigToConfigure(raw: string): ParsedConfigureForm
       }
       continue
     }
-    if (compact.includes('PoleLength')) {
+    if (compact.includes('PoleLength') || key.includes('polelength')) {
       const cm = parseInt(afterFirstColon(rawLine).replace(/\s+/g, ''), 10)
       if (Number.isFinite(cm) && cm > 0) {
         let m = cm / 100
@@ -141,7 +155,7 @@ export function parseReadRadeConfigToConfigure(raw: string): ParsedConfigureForm
       }
       continue
     }
-    if (compact.includes('SensitiveInfo')) {
+    if (compact.includes('SensitiveInfo') || key.includes('sensitiveinfo')) {
       const parsed = parseSensitiveInfoValue(rawLine)
       if (parsed) {
         const idx = (LEVEL_CODES as readonly string[]).indexOf(parsed.levelStr.trim())
@@ -152,14 +166,10 @@ export function parseReadRadeConfigToConfigure(raw: string): ParsedConfigureForm
       }
       continue
     }
-    if (compact.includes('YLimitWidth')) {
+    if (compact.includes('YLimitWidth') || key.includes('ylimitwidth')) {
       const S = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(S)) {
-        let n = S
-        if (n < 10) n = 10
-        if (n > 100) n = 100
-        n = Math.round(n / 10) * 10
-        out.nearNoDetect = n
+        out.nearNoDetect = S
         touch('YLimitWidth')
       }
       continue
@@ -186,9 +196,10 @@ export function parseReadRadeConfigToAdvanced(
 
   for (const line of lines) {
     const compact = line.replace(/\s+/g, '')
+    const key = normalizedHeadKey(line)
     const rawLine = line
 
-    if (compact.includes('JudgeSwitch')) {
+    if (compact.includes('JudgeSwitch') || key.includes('judgeswitch')) {
       const v = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(v)) {
         out.judgeTarActive = v === 1 ? 1 : 2
@@ -196,7 +207,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('DirectionCtrl')) {
+    if (compact.includes('DirectionCtrl') || key.includes('directionctrl')) {
       const d = parseInt(afterFirstColon(line), 10)
       if (d === 1) {
         out.passDirection = 1
@@ -210,7 +221,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('GateRelay')) {
+    if (compact.includes('GateRelay') || key.includes('gaterelayflag') || key.includes('gaterelay')) {
       const rest = rawLine.slice(rawLine.indexOf(':') + 1)
       const l = rest.split(' ')
       const v = parseInt(l[1]!, 10)
@@ -220,7 +231,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('BleSwitchFlag')) {
+    if (compact.includes('BleSwitchFlag') || key.includes('bleswitchflag')) {
       const g = afterFirstColon(rawLine).split(' ')
       if (g.length >= 3) {
         const t2 = parseInt(g[2]!, 10)
@@ -231,7 +242,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('SensitiveInfo')) {
+    if (compact.includes('SensitiveInfo') || key.includes('sensitiveinfo')) {
       const parsed = parseSensitiveInfoValue(rawLine)
       if (parsed) {
         const m = parsed.levelStr
@@ -244,7 +255,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('YLimitWidth')) {
+    if (compact.includes('YLimitWidth') || key.includes('ylimitwidth')) {
       const S = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(S)) {
         out.nearNum = S
@@ -252,7 +263,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('SetMidWidth')) {
+    if (compact.includes('SetMidWidth') || key.includes('setmidwidth')) {
       const M = afterFirstColon(rawLine).split(' ')
       const c: string[] = []
       for (let I = 0; I < M.length; I++) if (M[I] !== '') c.push(M[I]!)
@@ -263,7 +274,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('LeftWidth')) {
+    if (compact.includes('LeftWidth') || key.includes('leftwidth')) {
       const O = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(O)) {
         out.leftW = O
@@ -271,7 +282,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('RightWidth')) {
+    if (compact.includes('RightWidth') || key.includes('rightwidth')) {
       const L = parseInt(afterFirstColon(line), 10)
       if (Number.isFinite(L)) {
         out.rightW = L
@@ -279,7 +290,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('SetCutArea')) {
+    if (compact.includes('SetCutArea') || key.includes('setcutarea')) {
       const head = rawLine.split(':')[0] ?? ''
       const bracket = head.split(/\s+/)[1]?.trim()
       const H = afterFirstColon(rawLine).trim()
@@ -309,7 +320,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('RangeDimensionJudge')) {
+    if (compact.includes('RangeDimensionJudge') || key.includes('rangedimensionjudge')) {
       const H = afterFirstColon(rawLine).trim()
       if (H) {
         out.rangeJudge = H
@@ -317,7 +328,7 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('FalseAlarmFilter')) {
+    if (compact.includes('FalseAlarmFilter') || key.includes('falsealarmfilter')) {
       const H = afterFirstColon(rawLine).trim()
       if (H) {
         out.multipath = H
@@ -365,7 +376,31 @@ export function parseReadRadeConfigToAdvanced(
       }
       continue
     }
-    if (compact.includes('GateTimeParam')) {
+    if (compact.includes('RainVal') || key.includes('rainval35')) {
+      const val = afterFirstColon(rawLine).trim()
+      if (!val) continue
+      const adv = out as ParsedAdvancedConfig & ParsedReadExtraBlocks
+      const headRaw = (rawLine.split(':')[0] || '').toLowerCase()
+      if ((headRaw.includes('<') && headRaw.includes('3.5')) || key.includes('rainval35lt')) {
+        adv.rainLt35 = val
+        touch('RainValLt35')
+      } else if ((headRaw.includes('>') && headRaw.includes('3.5')) || key.includes('rainval35gt')) {
+        adv.rainGt35 = val
+        touch('RainValGt35')
+      }
+      continue
+    }
+    if (compact.includes('isCarCFG') || key.includes('iscarcfg')) {
+      const val = afterFirstColon(rawLine).trim()
+      const b = rawLine.split(':')[0] || ''
+      const adv = out as ParsedAdvancedConfig & ParsedReadExtraBlocks
+      if (/\[01\]/.test(b)) adv.isCarCfg01 = val
+      if (/\[02\]/.test(b)) adv.isCarCfg02 = val
+      if (/\[03\]/.test(b)) adv.isCarCfg03 = val
+      touch('isCarCFG')
+      continue
+    }
+    if (compact.includes('GateTimeParam') || key.includes('gatetimeparam')) {
       const lo = parseGateTimeParamLightSec(rawLine)
       if (lo !== undefined) {
         out.lightOutNum = lo
