@@ -35,6 +35,7 @@ import {
   supportPageHtml,
   targetExtrasHtml,
 } from './pages-n1'
+import { bindBenchLabPage, pageBenchLabHtml } from './bench-lab'
 
 type Route =
   | 'connect'
@@ -47,6 +48,7 @@ type Route =
   | 'firmware'
   | 'commands'
   | 'support'
+  | 'bench'
 
 function parseRoute(): Route {
   const h = (location.hash.replace(/^#\/?/, '') || 'connect').split('/')[0]
@@ -61,6 +63,7 @@ function parseRoute(): Route {
     firmware: 'firmware',
     commands: 'commands',
     support: 'support',
+    bench: 'bench',
   }
   return map[h] ?? 'connect'
 }
@@ -92,6 +95,7 @@ function titleFor(r: Route): string {
     firmware: 'Firmware update',
     commands: 'Command console',
     support: 'Remote support',
+    bench: 'Bench test lab',
   }
   return titles[r]
 }
@@ -131,7 +135,7 @@ function statusStrip(route: Route): string {
 }
 
 function shell(route: Route): string {
-  const showBack = ['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support'].includes(
+  const showBack = ['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(
     route
   )
 
@@ -146,7 +150,7 @@ function shell(route: Route): string {
     </header>
     ${statusStrip(route)}
     <main class="app-main" id="main-pane"></main>
-    ${['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support'].includes(route) ? '' : tabBar(route)}
+    ${['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(route) ? '' : tabBar(route)}
   `
 }
 
@@ -431,6 +435,7 @@ function pageMore(): string {
         <ul class="link-list">
           ${linkCard('advanced', 'Radar advanced', collapseHelpWs(more.cardAdvanced), Ico.radar)}
           ${linkCard('instructions', 'Instruction console', collapseHelpWs(more.cardInstructions), Ico.bolt)}
+          ${linkCard('bench', 'Bench test lab', 'One-page test runner with BLE control, scripted runs, and exports.', Ico.grid)}
         </ul>
       </div>
 
@@ -531,6 +536,10 @@ function pageSupport(): string {
   return supportPageHtml()
 }
 
+function pageBench(): string {
+  return pageBenchLabHtml()
+}
+
 function renderMain(route: Route): void {
   rxUnsub?.()
   rxUnsub = null
@@ -548,6 +557,7 @@ function renderMain(route: Route): void {
     firmware: pageFirmware,
     commands: pageCommands,
     support: pageSupport,
+    bench: pageBench,
   }
   pane.innerHTML = pages[route]()
 
@@ -561,6 +571,7 @@ function renderMain(route: Route): void {
   if (route === 'instructions') bindInstructionsPage()
   if (route === 'commands') bindCommands()
   if (route === 'connect') bindConnect()
+  if (route === 'bench') bindBenchLabPage()
 
   attachRxMirror(route)
 }
