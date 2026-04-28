@@ -59,6 +59,19 @@ function runBle(fn: (s: RadarSession) => Promise<void>): void {
   })()
 }
 
+async function runQueueWithDiagnostics(s: RadarSession, cmds: string[]): Promise<void> {
+  s.clearRxLog()
+  for (let i = 0; i < cmds.length; i++) {
+    const cmd = cmds[i]!
+    await s.enqueueWrite(cmd)
+    await s.waitForText(/Done|Error\s*-?\d*/i, 8000).catch(() => {})
+    const tail = s.rxLog.slice(-600)
+    if (/Error\s*-?\d*/i.test(tail)) {
+      throw new Error(`Save failed at step ${i + 1}/${cmds.length}: ${cmd}`)
+    }
+  }
+}
+
 export function pageAdvancedHtml(): string {
   const st = getState()
   const dm = esc(st.deviceModel || '')
@@ -451,7 +464,7 @@ export function bindAdvancedPage(): void {
     patchState({ deviceModel: snap.deviceModel, firmwareMainVer: snap.firmwareMainVer })
     runBle(async (s) => {
       const cmds = buildAdvancedSaveCommands(snap)
-      await s.sendLines(cmds, 120)
+      await runQueueWithDiagnostics(s, cmds)
     })
   })
 

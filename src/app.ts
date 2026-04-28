@@ -760,6 +760,19 @@ function bindConfigure(): void {
     }
   }
 
+  const runQueueWithDiagnostics = async (s: RadarSession, cmds: string[]): Promise<void> => {
+    s.clearRxLog()
+    for (let i = 0; i < cmds.length; i++) {
+      const cmd = cmds[i]!
+      await s.enqueueWrite(cmd)
+      await s.waitForText(/Done|Error\s*-?\d*/i, 7000).catch(() => {})
+      const tail = s.rxLog.slice(-500)
+      if (/Error\s*-?\d*/i.test(tail)) {
+        throw new Error(`Save failed at step ${i + 1}/${cmds.length}: ${cmd}`)
+      }
+    }
+  }
+
   document.getElementById('btn-read-cfg')?.addEventListener('click', () => {
     const s = getActiveSession()
     if (!s?.connected) {
@@ -784,14 +797,31 @@ function bindConfigure(): void {
   document.getElementById('btn-save-cfg')?.addEventListener('click', () => {
     void runBle(async (s) => {
       const cmds = buildConfigureCommands(readConfigureForm())
-      await s.sendLines(cmds)
+      await runQueueWithDiagnostics(s, cmds)
     })
   })
 
   document.getElementById('btn-sync-time')?.addEventListener('click', () => {
-    void runBle(async (s) => {
-      await s.enqueueWrite(syncTimeCommand())
-    })
+    const s = getActiveSession()
+    if (!s?.connected) {
+      toast('Connect under Connect tab first', false)
+      return
+    }
+    void (async () => {
+      try {
+        s.clearRxLog()
+        await s.enqueueWrite(syncTimeCommand())
+        await s.waitForText(/Done|Error\s*-?\d*/i, 6000).catch(() => {})
+        const rx = s.rxLog
+        if (/Error\s*-?\d*/i.test(rx)) {
+          toast('Sync time rejected by device (Error -1). This firmware may not support SetParas 10 2.', false)
+          return
+        }
+        toast('Time sync command sent')
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'BLE error', false)
+      }
+    })()
   })
 
   document.getElementById('btn-get-ver')?.addEventListener('click', () => {
