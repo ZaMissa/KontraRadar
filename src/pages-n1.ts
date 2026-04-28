@@ -204,6 +204,15 @@ export function pageAdvancedHtml(): string {
         <button type="button" class="btn btn-secondary flex-1" id="adv-reboot">${esc(cmdReboot())}</button>
         <button type="button" class="btn btn-secondary flex-1" id="adv-reset">${esc(cmdResetRadeConfig())}</button>
       </div>
+      <div class="card row gap wrap">
+        <label class="row gap align-center hint" style="margin:0">
+          <input type="checkbox" id="adv-autoscroll" checked />
+          <span>Autoscroll</span>
+        </label>
+        <button type="button" class="btn btn-ghost" id="adv-freeze">Freeze</button>
+        <button type="button" class="btn btn-ghost" id="adv-copy-rx">Copy log</button>
+        <button type="button" class="btn btn-ghost" id="adv-clear-rx">Clear log</button>
+      </div>
       <pre class="card code-out tall" id="adv-rx"></pre>
     </section>
   `
@@ -363,10 +372,35 @@ export function bindAdvancedPage(): void {
 
   const rx = document.getElementById('adv-rx')
   const sess = getActiveSession()
+  const freezeBtn = document.getElementById('adv-freeze') as HTMLButtonElement | null
+  const copyBtn = document.getElementById('adv-copy-rx') as HTMLButtonElement | null
+  const clearBtn = document.getElementById('adv-clear-rx') as HTMLButtonElement | null
+  const autoEl = document.getElementById('adv-autoscroll') as HTMLInputElement | null
+  let paused = false
+  freezeBtn?.addEventListener('click', () => {
+    paused = !paused
+    freezeBtn.textContent = paused ? 'Resume' : 'Freeze'
+  })
+  copyBtn?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(rx?.textContent || '')
+      toast('Advanced log copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
+  })
+  clearBtn?.addEventListener('click', () => {
+    sess?.clearRxLog()
+    if (rx) rx.textContent = '—'
+  })
   if (sess && rx) {
     rx.textContent = sess.rxLog || '—'
     sess.onRx(() => {
-      if (rx) rx.textContent = sess.rxLog
+      if (paused) return
+      if (rx) {
+        rx.textContent = sess.rxLog
+        if (autoEl?.checked ?? true) rx.scrollTop = rx.scrollHeight
+      }
     })
   }
 
@@ -497,6 +531,10 @@ export function targetExtrasHtml(): string {
         <button type="button" class="btn btn-primary flex-1" id="tgt-start">Start COMOutputCfg 8</button>
         <button type="button" class="btn btn-secondary flex-1" id="tgt-stop">Stop COMOutputCfg 0</button>
       </div>
+      <div class="row gap">
+        <button type="button" class="btn btn-ghost flex-1" id="tgt-snapshot">Snapshot log tail</button>
+        <button type="button" class="btn btn-ghost flex-1" id="tgt-copy">Copy tail</button>
+      </div>
       <label class="field">
         <span class="field-label">Raw notify tail</span>
         <pre class="code-out" id="tgt-raw"></pre>
@@ -525,6 +563,18 @@ export function bindTargetExtras(): void {
     runBle(async (s) => {
       await s.enqueueWrite(cmdComOutputCfg(0))
     })
+  })
+  document.getElementById('tgt-snapshot')?.addEventListener('click', () => {
+    sync()
+    toast('Snapshot captured')
+  })
+  document.getElementById('tgt-copy')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(pre?.textContent || '')
+      toast('Tail copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
   })
   sync()
 }

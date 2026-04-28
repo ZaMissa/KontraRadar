@@ -355,7 +355,15 @@ function pageConfigure(): string {
               <p class="card-sub">Notify stream (ASCII)</p>
             </div>
           </div>
-          <button type="button" class="btn btn-ghost tight" id="btn-clear-rx">Clear</button>
+          <div class="row gap wrap">
+            <label class="row gap align-center hint" style="margin:0">
+              <input type="checkbox" id="chk-autoscroll-rx" checked />
+              <span>Autoscroll</span>
+            </label>
+            <button type="button" class="btn btn-ghost tight" id="btn-pause-rx">Freeze</button>
+            <button type="button" class="btn btn-ghost tight" id="btn-copy-rx">Copy</button>
+            <button type="button" class="btn btn-ghost tight" id="btn-clear-rx">Clear</button>
+          </div>
         </div>
         <p class="hint">${collapseHelpWs(configure.liveLog)}</p>
         <pre class="code-out tall" id="ble-rx" aria-live="polite">—</pre>
@@ -554,9 +562,28 @@ function attachRxMirror(route: Route): void {
   const pre = document.getElementById('ble-rx')
   const sess = getActiveSession()
   if (!sess || !pre) return
+  const pauseBtn = document.getElementById('btn-pause-rx') as HTMLButtonElement | null
+  const copyBtn = document.getElementById('btn-copy-rx') as HTMLButtonElement | null
+  const autoEl = document.getElementById('chk-autoscroll-rx') as HTMLInputElement | null
+  let paused = false
+
+  pauseBtn?.addEventListener('click', () => {
+    paused = !paused
+    pauseBtn.textContent = paused ? 'Resume' : 'Freeze'
+  })
+  copyBtn?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(pre.textContent || '')
+      toast('Log copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
+  })
+
   const sync = () => {
+    if (paused) return
     pre.textContent = sess.rxLog || '—'
-    pre.scrollTop = pre.scrollHeight
+    if (autoEl?.checked ?? true) pre.scrollTop = pre.scrollHeight
   }
   sync()
   rxUnsub = sess.onRx(() => sync())
