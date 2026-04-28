@@ -17,6 +17,7 @@ import {
   parseReadRadeConfigToAdvanced,
   type ParsedAdvancedConfig,
 } from './parse-read-config'
+import { runQueueWithFirmwareDiagnostics } from './save-diagnostics'
 import {
   collapseHelpWs,
   advanced,
@@ -57,19 +58,6 @@ function runBle(fn: (s: RadarSession) => Promise<void>): void {
       toast(e instanceof Error ? e.message : 'Error', false)
     }
   })()
-}
-
-async function runQueueWithDiagnostics(s: RadarSession, cmds: string[]): Promise<void> {
-  s.clearRxLog()
-  for (let i = 0; i < cmds.length; i++) {
-    const cmd = cmds[i]!
-    await s.enqueueWrite(cmd)
-    await s.waitForText(/Done|Error\s*-?\d*/i, 8000).catch(() => {})
-    const tail = s.rxLog.slice(-600)
-    if (/Error\s*-?\d*/i.test(tail)) {
-      throw new Error(`Save failed at step ${i + 1}/${cmds.length}: ${cmd}`)
-    }
-  }
 }
 
 export function pageAdvancedHtml(): string {
@@ -489,7 +477,12 @@ export function bindAdvancedPage(): void {
     runBle(async (s) => {
       const cmds = buildAdvancedSaveCommands(snap)
       try {
-        await runQueueWithDiagnostics(s, cmds)
+        const res = await runQueueWithFirmwareDiagnostics(s, cmds, 8000)
+        if (res.warnings.length > 0) {
+          const msg = res.warnings.map((w) => w.message).join('\n')
+          setPersistentError(msg)
+          toast('Saved with firmware guardrail warning(s)', false)
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Save failed'
         setPersistentError(msg)
