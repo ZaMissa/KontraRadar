@@ -65,8 +65,25 @@ type Route =
   | 'support'
   | 'bench'
 
-function parseRoute(): Route {
-  const h = (location.hash.replace(/^#\/?/, '') || 'connect').split('/')[0]
+type AppMode = 'user' | 'dev'
+
+type ParsedNav = { mode: AppMode; route: Route }
+
+function parseRoute(): ParsedNav {
+  const parts = (location.hash.replace(/^#\/?/, '') || 'user/connect').split('/').filter(Boolean)
+  const maybeMode = parts[0]
+  if (maybeMode === 'user' || maybeMode === 'dev') {
+    const requested = parts[1] || (maybeMode === 'user' ? 'connect' : 'more')
+    const mapped = mapRouteToken(requested)
+    const route = normalizeRouteForMode(maybeMode, mapped)
+    return { mode: maybeMode, route }
+  }
+  // Backward compatibility: old hashes without mode are treated as dev routes.
+  const legacy = mapRouteToken(parts[0] || 'connect')
+  return { mode: 'dev', route: legacy }
+}
+
+function mapRouteToken(h: string): Route {
   const map: Record<string, Route> = {
     connect: 'connect',
     configure: 'configure',
@@ -83,8 +100,16 @@ function parseRoute(): Route {
   return map[h] ?? 'connect'
 }
 
-function setHash(route: Route): void {
-  location.hash = `#/${route}`
+function normalizeRouteForMode(mode: AppMode, route: Route): Route {
+  if (mode === 'user') {
+    const allowed: Route[] = ['connect', 'configure', 'target', 'advanced']
+    return allowed.includes(route) ? route : 'connect'
+  }
+  return route
+}
+
+function setHash(route: Route, mode: AppMode): void {
+  location.hash = `#/${mode}/${route}`
 }
 
 let targetPageCleanup: (() => void) | null = null
@@ -98,7 +123,7 @@ function buildStamp(): string {
   return `v${__APP_VERSION__} · ${__APP_COMMIT__} · ${ts}`
 }
 
-function titleFor(r: Route): string {
+function titleFor(mode: AppMode, r: Route): string {
   const titles: Record<Route, string> = {
     connect: 'Connect',
     configure: 'Configure',
@@ -112,6 +137,7 @@ function titleFor(r: Route): string {
     support: 'Remote support',
     bench: 'Bench test lab',
   }
+  if (mode === 'user' && r === 'advanced') return 'Radar tuning'
   return titles[r]
 }
 
@@ -127,8 +153,8 @@ const Ico = {
   help: `<svg class="ico ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 16v.5M12 8a3 3 0 0 0-3 3c0 1 .5 1.5 1 2"/></svg>`,
 }
 
-function statusStrip(route: Route): string {
-  const main: Route[] = ['connect', 'configure', 'target', 'more']
+function statusStrip(route: Route, mode: AppMode): string {
+  const main: Route[] = mode === 'user' ? ['connect', 'configure', 'target', 'advanced'] : ['connect', 'configure', 'target', 'more']
   if (!main.includes(route)) return ''
   const sess = getActiveSession()
   const st = getState()
@@ -149,35 +175,49 @@ function statusStrip(route: Route): string {
   `
 }
 
-function shell(route: Route): string {
-  const showBack = ['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(
-    route
-  )
+function shell(route: Route, mode: AppMode): string {
+  const showBack =
+    mode === 'user'
+      ? false
+      : ['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(route)
 
   return `
-    <header class="app-header">
+    <header class="app-header ${mode === 'user' ? 'app-header-user' : ''}">
       ${showBack ? `<button type="button" class="btn-back" id="btn-back" aria-label="Back">←</button>` : '<span class="header-spacer"></span>'}
       <div class="header-center">
-        <h1 class="app-title">${escapeHtml(titleFor(route))}</h1>
-        ${showBack ? '' : `<p class="header-tagline">Vendor-style ASCII · Web Bluetooth</p>`}
+        <h1 class="app-title">${escapeHtml(titleFor(mode, route))}</h1>
+        ${showBack ? '' : `<p class="header-tagline">${mode === 'user' ? 'Commissioning assistant · visual guidance' : 'Vendor-style ASCII · Web Bluetooth'}</p>`}
       </div>
-      <span class="header-spacer"></span>
+      <button type="button" class="btn-mode" id="btn-switch-mode">${mode === 'user' ? 'DEV UI' : 'USER UI'}</button>
     </header>
-    ${statusStrip(route)}
+    ${statusStrip(route, mode)}
     <main class="app-main" id="main-pane"></main>
-    ${['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(route) ? '' : tabBar(route)}
+    ${showTabBar(route, mode) ? tabBar(route, mode) : ''}
   `
 }
 
-function tabBar(active: Route): string {
-  const tabs: { id: Route; label: string; icon: string }[] = [
-    { id: 'connect', label: 'Connect', icon: Ico.bluetooth },
-    { id: 'configure', label: 'Configure', icon: Ico.sliders },
-    { id: 'target', label: 'Targets', icon: Ico.grid },
-    { id: 'more', label: 'More', icon: Ico.menu },
-  ]
+function showTabBar(route: Route, mode: AppMode): boolean {
+  if (mode === 'user') return true
+  return !['settings', 'advanced', 'instructions', 'firmware', 'commands', 'support', 'bench'].includes(route)
+}
+
+function tabBar(active: Route, mode: AppMode): string {
+  const tabs: { id: Route; label: string; icon: string }[] =
+    mode === 'user'
+      ? [
+          { id: 'connect', label: 'Connect', icon: Ico.bluetooth },
+          { id: 'configure', label: 'Use radar', icon: Ico.sliders },
+          { id: 'target', label: 'Live view', icon: Ico.grid },
+          { id: 'advanced', label: 'Advanced', icon: Ico.menu },
+        ]
+      : [
+          { id: 'connect', label: 'Connect', icon: Ico.bluetooth },
+          { id: 'configure', label: 'Configure', icon: Ico.sliders },
+          { id: 'target', label: 'Targets', icon: Ico.grid },
+          { id: 'more', label: 'More', icon: Ico.menu },
+        ]
   return `
-    <nav class="tab-bar" role="tablist" aria-label="Primary">
+    <nav class="tab-bar" role="tablist" aria-label="Primary" data-mode="${mode}">
       ${tabs
         .map(
           (t) => `
@@ -282,7 +322,132 @@ function pageConnect(): string {
   `
 }
 
-function pageConfigure(): string {
+function pageConfigure(mode: AppMode): string {
+  if (mode === 'user') {
+    const sess = getActiveSession()
+    const warn = sess?.connected
+      ? ''
+      : `<div class="banner-warn" role="alert">
+          <strong>No live BLE session.</strong> Connect first, then set orientation, sensitivity, and safety zones.
+        </div>`
+    return `
+      <section class="page page-configure page-user-configure">
+        ${warn}
+        <div class="card card-elevated user-hero">
+          <h2 class="card-title tight">Commission radar with visual guidance</h2>
+          <p class="hint">Use controls below and watch the scene preview to understand how each setting affects operation.</p>
+          <canvas id="user-scene-canvas" width="340" height="190" aria-label="Radar installation preview"></canvas>
+          <div class="row gap wrap user-legend">
+            <span class="badge badge-soft">Blue: active lane</span>
+            <span class="badge badge-soft">Orange: near ignore zone</span>
+            <span class="badge badge-soft">Ring: sensitivity level</span>
+          </div>
+        </div>
+
+        <div class="card card-elevated">
+          <div class="card-head">
+            ${Ico.sliders}
+            <div>
+              <h2 class="card-title tight">Sensitivity</h2>
+              <p class="card-sub">Adjust response strength and observe ring intensity.</p>
+            </div>
+          </div>
+          <div class="ring-wrap">
+            <canvas id="ring-canvas" width="200" height="200" aria-label="Sensitivity gauge"></canvas>
+            <div class="ring-meta">
+              <div class="ring-step-line"><span id="ring-value">3</span><span class="unit"> / 5</span></div>
+              <div class="preset-tier-title" id="level-tier-name">${LEVEL_PRESETS[2]!.shortLabel}</div>
+              <div class="preset-token mono" id="level-code">${LEVEL_CODES[2]}</div>
+              <p class="hint preset-blurb" id="level-blurb">${LEVEL_PRESETS[2]!.blurb}</p>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">Sensitivity level</span>
+            <input type="range" id="rng-level" min="1" max="5" step="1" value="3" aria-describedby="level-blurb" />
+          </label>
+          <details class="fold-hint">
+            <summary>Why three numbers like “3 3 2”?</summary>
+            <p class="hint">${collapseHelpWs(sensitivityTriplesFold)}</p>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            ${Ico.radar}
+            <div>
+              <h2 class="card-title tight">Mounting and lane geometry</h2>
+              <p class="card-sub">Orientation, gate arm type, length, and near-ignore area.</p>
+            </div>
+          </div>
+          <div class="seg" role="group" aria-label="Approach side">
+            <span class="field-label">Installation side</span>
+            <div class="seg-row">
+              <button type="button" class="seg-btn seg-active" data-orient="1" id="ori-l">Left fixed</button>
+              <button type="button" class="seg-btn" data-orient="2" id="ori-r">Right fixed</button>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">Vehicle crossing type</span>
+            <select id="pole-type">
+              ${POLE_TYPES.map((p) => `<option value="${p.id}">${p.label}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Arm length (m)</span>
+            <input type="range" id="pole-m" min="1" max="7" step="0.1" value="3" />
+            <span class="hint"><span id="pole-m-lbl">3.0</span> m</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Near ignore distance</span>
+            <input type="range" id="near" min="1" max="100" step="1" value="10" />
+            <span class="hint"><span id="near-lbl">10</span> (larger value increases blind area near gate)</span>
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            ${Ico.bolt}
+            <div>
+              <h2 class="card-title tight">Actions</h2>
+              <p class="card-sub">Read/write, learning, and diagnostics.</p>
+            </div>
+          </div>
+          <div class="btn-grid">
+            <button type="button" class="btn btn-secondary" id="btn-read-cfg">Read config</button>
+            <button type="button" class="btn btn-primary" id="btn-save-cfg">Save to radar</button>
+            <button type="button" class="btn btn-secondary" id="btn-learn-bg">Lifting learn</button>
+            <button type="button" class="btn btn-secondary" id="btn-read-learn-bg">Read learn BG (8)</button>
+            <button type="button" class="btn btn-secondary" id="btn-read-learn-move">Read learn move (9)</button>
+            <button type="button" class="btn btn-secondary" id="btn-sync-time">Sync time</button>
+            <button type="button" class="btn btn-secondary" id="btn-get-ver">Get version</button>
+          </div>
+        </div>
+
+        <div class="card card-log">
+          <div class="row between card-head-row">
+            <h2 class="card-title tight">Live from radar</h2>
+            <div class="row gap wrap">
+              <label class="row gap align-center hint" style="margin:0">
+                <input type="checkbox" id="chk-autoscroll-rx" checked />
+                <span>Autoscroll</span>
+              </label>
+              <button type="button" class="btn btn-ghost tight" id="btn-pause-rx">Freeze</button>
+              <button type="button" class="btn btn-ghost tight" id="btn-copy-rx">Copy</button>
+              <button type="button" class="btn btn-ghost tight" id="btn-clear-rx">Clear</button>
+            </div>
+          </div>
+          <pre class="code-out tall" id="ble-rx" aria-live="polite">—</pre>
+        </div>
+        <div class="card">
+          <div class="row between card-head-row">
+            <h2 class="card-title tight">Last error / status</h2>
+            <button type="button" class="btn btn-ghost tight" id="btn-copy-last-error">Copy</button>
+          </div>
+          <pre class="code-out" id="cfg-last-error">—</pre>
+        </div>
+      </section>
+    `
+  }
   const sess = getActiveSession()
   const warn = sess?.connected
     ? ''
@@ -565,7 +730,116 @@ function pageBench(): string {
   return pageBenchLabHtml()
 }
 
-function renderMain(route: Route): void {
+function pageUserAdvanced(): string {
+  const base = pageAdvancedHtml().replace('class="page"', 'class="page page-user-advanced"')
+  const visual = `
+    <div class="card card-elevated">
+      <h2 class="card-title tight">Advanced visual preview</h2>
+      <p class="hint">Preview pass direction and cut areas while tuning expert parameters.</p>
+      <div id="user-pass-dir" class="hint">Pass direction: mode 1 (left to right)</div>
+      <canvas id="user-cut-canvas" width="340" height="220" aria-label="Cut area preview"></canvas>
+    </div>
+  `
+  return base.replace('<p class="banner-warn">', `${visual}<p class="banner-warn">`)
+}
+
+function pageUserConnect(): string {
+  const base = pageConnect().replace('class="page page-connect"', 'class="page page-connect page-user-connect"')
+  const intro = `
+    <div class="card card-elevated">
+      <h2 class="card-title tight">Step 1: Connect your radar</h2>
+      <p class="hint">Pick your BLE radar, verify status turns green, then move to Use radar.</p>
+    </div>
+  `
+  return base.replace('<div class="hero-card">', `${intro}<div class="hero-card">`)
+}
+
+function pageUserTarget(): string {
+  const base = pageTarget().replace('class="page page-target"', 'class="page page-target page-user-target"')
+  const intro = `
+    <div class="card card-elevated">
+      <h2 class="card-title tight">Live movement view</h2>
+      <p class="hint">Watch detections in real time while tuning sensitivity and zone settings.</p>
+    </div>
+  `
+  return base.replace('<p class="lede lede-tight">', `${intro}<p class="lede lede-tight">`)
+}
+
+function drawUserCutCanvas(): void {
+  const canvas = document.getElementById('user-cut-canvas') as HTMLCanvasElement | null
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const w = canvas.width
+  const h = canvas.height
+  const pad = 24
+  const iw = w - pad * 2
+  const ih = h - pad * 2
+  const xToPx = (x: number) => pad + ((x + 4) / 8) * iw
+  const yToPx = (y: number) => pad + ih - (y / 7) * ih
+
+  ctx.clearRect(0, 0, w, h)
+  ctx.fillStyle = '#f6f8fc'
+  ctx.fillRect(0, 0, w, h)
+  ctx.strokeStyle = '#d8dfeb'
+  ctx.strokeRect(pad, pad, iw, ih)
+  ctx.fillStyle = '#6b7280'
+  ctx.font = '11px system-ui'
+  ctx.fillText('Across -4m', pad, h - 6)
+  ctx.fillText('Across 4m', w - 74, h - 6)
+  ctx.fillText('Range 7m', 6, pad + 10)
+
+  const parseRow = (txt: string): [number, number, number, number, number] | null => {
+    const nums = txt
+      .trim()
+      .split(/\s+/)
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v))
+    if (nums.length === 4) return [1, nums[0]!, nums[1]!, nums[2]!, nums[3]!]
+    if (nums.length >= 5) return [nums[0]!, nums[1]!, nums[2]!, nums[3]!, nums[4]!]
+    return null
+  }
+
+  ;['adv-c1', 'adv-c2', 'adv-c3', 'adv-c4'].forEach((id, idx) => {
+    const raw = (document.getElementById(id) as HTMLTextAreaElement | null)?.value ?? ''
+    const parsed = parseRow(raw)
+    if (!parsed || parsed[0] === 0) return
+    const [, xMin, xMax, yMin, yMax] = parsed
+    const x1 = xToPx(Math.max(-4, Math.min(4, xMin)))
+    const x2 = xToPx(Math.max(-4, Math.min(4, xMax)))
+    const y1 = yToPx(Math.max(0, Math.min(7, yMin)))
+    const y2 = yToPx(Math.max(0, Math.min(7, yMax)))
+    const left = Math.min(x1, x2)
+    const top = Math.min(y1, y2)
+    const rw = Math.max(2, Math.abs(x2 - x1))
+    const rh = Math.max(2, Math.abs(y2 - y1))
+    ctx.fillStyle = `rgba(255, 92, 92, ${0.2 + idx * 0.12})`
+    ctx.fillRect(left, top, rw, rh)
+    ctx.strokeStyle = '#d64040'
+    ctx.strokeRect(left, top, rw, rh)
+  })
+}
+
+function bindUserAdvancedVisuals(): void {
+  const passDir = document.getElementById('user-pass-dir')
+  const passLabel = (v: string) => (v === '1' ? 'mode 1 (left to right)' : v === '2' ? 'mode 2 (bidirectional)' : 'mode 3 (right to left)')
+  const syncPass = () => {
+    const active = document.querySelector<HTMLElement>('[data-adv-pass].seg-active')?.dataset.advPass ?? '1'
+    if (passDir) passDir.textContent = `Pass direction: ${passLabel(active)}`
+  }
+  document.querySelectorAll<HTMLElement>('[data-adv-pass]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTimeout(syncPass, 0)
+    })
+  })
+  ;['adv-c1', 'adv-c2', 'adv-c3', 'adv-c4'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', drawUserCutCanvas)
+  })
+  syncPass()
+  drawUserCutCanvas()
+}
+
+function renderMain(route: Route, mode: AppMode): void {
   rxUnsub?.()
   rxUnsub = null
   targetPageCleanup?.()
@@ -573,25 +847,41 @@ function renderMain(route: Route): void {
 
   const pane = document.getElementById('main-pane')
   if (!pane) return
-  const pages: Record<Route, () => string> = {
-    connect: pageConnect,
-    configure: pageConfigure,
-    target: pageTarget,
-    more: pageMore,
-    settings: pageSettings,
-    advanced: pageAdvancedHtml,
-    instructions: pageInstructionsHtml,
-    firmware: pageFirmware,
-    commands: pageCommands,
-    support: pageSupport,
-    bench: pageBench,
-  }
+  const pages: Record<Route, () => string> =
+    mode === 'user'
+      ? {
+          connect: pageUserConnect,
+          configure: () => pageConfigure(mode),
+          target: pageUserTarget,
+          advanced: pageUserAdvanced,
+          more: () => pageConfigure(mode),
+          settings: pageSettings,
+          instructions: pageInstructionsHtml,
+          firmware: pageFirmware,
+          commands: pageCommands,
+          support: pageSupport,
+          bench: pageBench,
+        }
+      : {
+          connect: pageConnect,
+          configure: () => pageConfigure(mode),
+          target: pageTarget,
+          more: pageMore,
+          settings: pageSettings,
+          advanced: pageAdvancedHtml,
+          instructions: pageInstructionsHtml,
+          firmware: pageFirmware,
+          commands: pageCommands,
+          support: pageSupport,
+          bench: pageBench,
+        }
   pane.innerHTML = pages[route]()
 
   if (route === 'configure') bindConfigure()
   if (route === 'target') bindTargetPage()
   if (route === 'settings') bindSettings()
   if (route === 'advanced') bindAdvancedPage()
+  if (mode === 'user' && route === 'advanced') bindUserAdvancedVisuals()
   if (route === 'instructions') bindInstructionsPage()
   if (route === 'commands') bindCommands()
   if (route === 'connect') bindConnect()
@@ -699,6 +989,46 @@ function drawRing(canvas: HTMLCanvasElement, level: number): void {
   ctx.stroke()
 }
 
+function drawUserScene(canvas: HTMLCanvasElement, cfg: { orientation: 1 | 2; nearNoDetect: number; levelIndex: number }): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const w = canvas.width
+  const h = canvas.height
+  ctx.clearRect(0, 0, w, h)
+  ctx.fillStyle = '#f5f8fc'
+  ctx.fillRect(0, 0, w, h)
+
+  const laneX = 40
+  const laneY = 58
+  const laneW = w - 80
+  const laneH = 70
+  ctx.fillStyle = '#e7edf5'
+  ctx.fillRect(laneX, laneY, laneW, laneH)
+
+  const radarOnLeft = cfg.orientation === 1
+  const radarX = radarOnLeft ? laneX + 8 : laneX + laneW - 20
+  const radarY = laneY + 22
+  ctx.fillStyle = '#0d5cb6'
+  ctx.fillRect(radarX, radarY, 12, 24)
+
+  const nearPx = Math.min(120, Math.max(10, (cfg.nearNoDetect / 100) * 120))
+  ctx.fillStyle = 'rgba(255,149,0,0.28)'
+  if (radarOnLeft) ctx.fillRect(radarX + 12, laneY, nearPx, laneH)
+  else ctx.fillRect(radarX - nearPx, laneY, nearPx, laneH)
+
+  const sensRadius = 18 + cfg.levelIndex * 5
+  ctx.beginPath()
+  ctx.arc(radarX + 6, radarY + 12, sensRadius, 0, Math.PI * 2)
+  ctx.strokeStyle = 'rgba(0,122,255,0.36)'
+  ctx.lineWidth = 3
+  ctx.stroke()
+
+  ctx.fillStyle = '#1f2937'
+  ctx.font = '12px system-ui'
+  ctx.fillText(radarOnLeft ? 'Left fixed' : 'Right fixed', 12, 18)
+  ctx.fillText(`Near ignore: ${cfg.nearNoDetect}`, 12, h - 10)
+}
+
 function readConfigureForm(): {
   orientation: 1 | 2
   poleTypeId: 1 | 2 | 3
@@ -731,6 +1061,7 @@ function bindConfigure(): void {
   const poleLbl = document.getElementById('pole-m-lbl')
   const near = document.getElementById('near') as HTMLInputElement | null
   const nearLbl = document.getElementById('near-lbl')
+  const sceneCanvas = document.getElementById('user-scene-canvas') as HTMLCanvasElement | null
   const saveBtn = document.getElementById('btn-save-cfg') as HTMLButtonElement | null
   const readBtn = document.getElementById('btn-read-cfg') as HTMLButtonElement | null
   const learnBtn = document.getElementById('btn-learn-bg') as HTMLButtonElement | null
@@ -769,8 +1100,14 @@ function bindConfigure(): void {
       document.querySelectorAll<HTMLElement>('[data-orient]').forEach((n) => n.classList.remove('seg-active'))
       el.classList.add('seg-active')
       markConfigureDirty()
+      renderScene()
     })
   })
+
+  const renderScene = () => {
+    if (!sceneCanvas) return
+    drawUserScene(sceneCanvas, readConfigureForm())
+  }
 
   const updLevel = () => {
     const v = +rng!.value
@@ -781,6 +1118,7 @@ function bindConfigure(): void {
     if (tierNameEl) tierNameEl.textContent = preset?.shortLabel ?? '—'
     if (blurbEl) blurbEl.textContent = preset?.blurb ?? ''
     if (canvas) drawRing(canvas, clamped)
+    renderScene()
   }
   rng?.addEventListener('input', updLevel)
   rng?.addEventListener('change', markConfigureDirty)
@@ -788,6 +1126,7 @@ function bindConfigure(): void {
 
   const updPole = () => {
     if (poleLbl && poleM) poleLbl.textContent = Number(poleM.value).toFixed(1)
+    renderScene()
   }
   poleM?.addEventListener('input', updPole)
   poleM?.addEventListener('change', markConfigureDirty)
@@ -795,12 +1134,15 @@ function bindConfigure(): void {
 
   const updNear = () => {
     if (nearLbl && near) nearLbl.textContent = near.value
+    renderScene()
   }
   near?.addEventListener('input', updNear)
   near?.addEventListener('change', markConfigureDirty)
   updNear()
   document.getElementById('pole-type')?.addEventListener('change', markConfigureDirty)
+  document.getElementById('pole-type')?.addEventListener('change', renderScene)
   updateActionButtons()
+  renderScene()
 
   const setPersistentError = (msg: string): void => {
     const pre = document.getElementById('cfg-last-error')
@@ -1335,7 +1677,8 @@ function bindSettings(): void {
       optionalBleServices,
     })
     toast('Settings saved')
-    setHash('more')
+    const { mode } = parseRoute()
+    setHash(mode === 'user' ? 'configure' : 'more', mode)
     navigate()
   })
 }
@@ -1455,29 +1798,35 @@ function bindConnect(): void {
 }
 
 function navigate(): void {
-  const route = parseRoute()
+  const { route, mode } = parseRoute()
   const root = document.getElementById('app')
   if (!root) return
-  root.innerHTML = shell(route)
-  renderMain(route)
-  bindChrome()
+  root.innerHTML = shell(route, mode)
+  renderMain(route, mode)
+  bindChrome(mode)
 }
 
-function bindChrome(): void {
+function bindChrome(mode: AppMode): void {
   document.querySelectorAll('.tab').forEach((btn) => {
     btn.addEventListener('click', () => {
       const r = (btn as HTMLElement).dataset.route as Route
-      if (r) setHash(r)
+      if (r) setHash(r, mode)
     })
   })
+  document.getElementById('btn-switch-mode')?.addEventListener('click', () => {
+    const { route } = parseRoute()
+    const nextMode: AppMode = mode === 'user' ? 'dev' : 'user'
+    setHash(nextMode === 'user' ? normalizeRouteForMode(nextMode, route) : 'more', nextMode)
+    navigate()
+  })
   document.getElementById('btn-back')?.addEventListener('click', () => {
-    setHash('more')
+    setHash('more', mode)
     navigate()
   })
   document.querySelectorAll('[data-go]').forEach((el) => {
     el.addEventListener('click', () => {
       const r = (el as HTMLElement).dataset.go as Route
-      if (r) setHash(r)
+      if (r) setHash(r, mode)
       navigate()
     })
   })
@@ -1485,7 +1834,7 @@ function bindChrome(): void {
 
 export function initApp(): void {
   window.addEventListener('hashchange', navigate)
-  if (!location.hash) setHash('connect')
+  if (!location.hash) setHash('connect', 'user')
   navigate()
 
   window.addEventListener('beforeunload', () => {

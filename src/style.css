@@ -164,6 +164,24 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+.btn-mode {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.app-header-user {
+  background: linear-gradient(165deg, #0e9f6e 0%, #0f9e9c 48%, #167f7b 100%);
+  box-shadow: 0 2px 14px rgba(9, 120, 105, 0.35);
+}
+
 .app-main {
   flex: 1;
   padding: 16px;
@@ -181,6 +199,7 @@ body {
   z-index: 20;
   display: flex;
   background: rgba(255, 255, 255, 0.94);
+  -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border-top: 1px solid var(--border);
   padding-bottom: var(--safe-b);
@@ -249,6 +268,31 @@ body {
 
 .page {
   animation: fade 0.2s ease;
+}
+
+.page-user-configure .user-hero {
+  border: 1px solid rgba(15, 158, 156, 0.22);
+  background: linear-gradient(180deg, #f7fffd 0%, #ffffff 100%);
+}
+
+#user-scene-canvas {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid #d7e7ea;
+  background: #f7fbfd;
+}
+
+.user-legend .badge {
+  font-weight: 500;
+}
+
+#user-cut-canvas {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid #d8dfea;
+  background: #f7f9fc;
 }
 
 @keyframes fade {

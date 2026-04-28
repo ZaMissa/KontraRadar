@@ -84,7 +84,25 @@ Configure/Advanced style action sequence in OEM app:
 Important: OEM completion toast does not guarantee every command is accepted by firmware.
 PWA must keep command-level diagnostics and partial-save messaging.
 
-## 6) Background learning flow facts
+## 6) Configure page "crossing type" findings (new screenshot evidence)
+
+Screenshots set: `docs/ui pics/types/IMG_7803..IMG_7808`.
+
+Confirmed UI rows and dialogs:
+- `过车类型` (vehicle crossing type) has a 3-option picker:
+  - `小型车` (small/compact),
+  - `混合车型` (mixed),
+  - `大型车` (large).
+- `道闸杆类型` picker exists and includes `直杆` (straight rod).
+- Help dialog from blue `?` beside `过车类型` states timing mapping:
+  - small: delay drop time `0.8s`,
+  - mixed: delay drop time `1.5s`,
+  - large: delay drop time `3s`.
+
+Implication:
+- This is not a cosmetic label only; it affects output hold/drop timing policy.
+
+## 7) Background learning + data capture facts
 
 Observed prompts include:
 - ensure boom is raised before learning,
@@ -93,13 +111,36 @@ Observed prompts include:
 
 This flow should remain operator-guided and explicit in PWA wording.
 
-## 7) Unknowns (do not over-interpret yet)
+OEM flow details now verified from `n1`:
+- learning trigger command family: `SetBGLearnStatus ...`.
+- "learning data display" is a separate read path:
+  - `ReadRadeConfig 8` (background learn data),
+  - `ReadRadeConfig 9` (up/down learn data).
+- Therefore, some firmware can return only `Done` for learning trigger and provide data only through later reads.
+
+PWA behavior updated accordingly:
+- Guided lifting learning trigger remains explicit/safety-first.
+- After trigger, PWA probes `ReadRadeConfig 8/9` to capture markers when streaming does not appear.
+- Manual buttons for `ReadRadeConfig 8/9` exist in both Configure and Bench Lab.
+
+## 8) Confidence table for ambiguous fields
+
+- `isCarCFG`:
+  - confidence: medium-high that it relates to vehicle profile/crossing-type behavior.
+  - reason: direct UI evidence of 3 vehicle types and explicit delay mapping (0.8/1.5/3.0s), plus naming pattern.
+  - still unconfirmed: exact internal tuple layout and whether all `isCarCFG[01..03]` blocks map 1:1 to picker choices.
+- `RainVal`:
+  - confidence: low-medium for "weather/rain clutter threshold" interpretation.
+  - reason: name suggests rain/environment handling, but no direct UI/control mapping on this firmware captured yet.
+  - current rule: treat as vendor/internal block until controlled before/after tests prove semantics.
+
+## 9) Unknowns (do not over-interpret yet)
 
 - Exact physical meaning of opaque tuple blocks (`RainVal`, `isCarCFG`, other tuple fields) is still vendor/internal.
 - Keep labels neutral and avoid fabricated semantics.
 - Continue collecting screenshots and before/after readbacks to tighten mapping.
 
-## 8) Development rules derived from evidence
+## 10) Development rules derived from evidence
 
 - Prefer persistent in-page diagnostics over transient toasts for failures.
 - For mixed success/failure queues, report partial saves explicitly.
