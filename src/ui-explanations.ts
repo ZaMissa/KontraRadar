@@ -35,7 +35,8 @@ export const configure = {
   lede: `Matches the vendor “configure” workflow: sensitivity preset, which side vehicles approach from, boom
     (barrier arm) shape and effective length, and near-range suppression — then push the batch or read values
     back. After changing boom length, arm type, or fixed side, the OEM manual requires repeating background /
-    boom learning on site; this web app cannot run those mechanical learning steps.`,
+    boom learning on site; this web app now includes a guided lifting background-learning trigger and captures
+    learning-related notify markers in the live log.`,
   sensitivity: `Five discrete presets encoded as <code>SetParas 4 2</code> level strings (same triples as
     <code>n1</code> <code>levelCodes</code>). Higher bands generally demand cleaner mounting: keep the radar
     rigid, avoid bent booms and obstacles within about 1.5 m to the sides (manual FAQ).`,
@@ -48,6 +49,8 @@ export const configure = {
   actions: `<strong>Read config</strong> sends <code>ReadRadeConfig 2</code> and fills these controls when the
     reply contains lines such as <code>GateFixation</code>, <code>PoleLength</code>, etc.
     <strong>Save to radar</strong> queues the same command bundle the mini program builds for basic commissioning.
+    <strong>Lifting learn</strong> runs <code>SetBGLearnStatus 2</code> with safety prompts and watches the notify
+    stream for <code>Done</code>/<code>Error</code>/<code>Learn</code>/<code>Finish</code> markers.
     <strong>Sync time</strong> pushes Unix time (<code>SetParas 10 2</code>). <strong>Get version</strong> asks the
     firmware identity — use it with Settings model/FW for advanced sensitivity math.`,
   liveLog: `Mirrors the notify stream: human-readable keys, commas, and <code>Done</code> endings as in vendor logs.

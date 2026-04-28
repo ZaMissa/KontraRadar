@@ -172,6 +172,17 @@ export function cmdComOutputCfg(mode: number): string {
   return `COMOutputCfg ${mode}`
 }
 
+/**
+ * Learning flow opcodes seen in n1 configure page:
+ * - 2: lifting background learning
+ * - 1: up/down learning
+ * - 1 1: finalize up/down learning
+ * - 3: follow-up stage in new protocol variants
+ */
+export function cmdSetBGLearnStatus(stage: number, subStage?: number): string {
+  return subStage === undefined ? `SetBGLearnStatus ${stage}` : `SetBGLearnStatus ${stage} ${subStage}`
+}
+
 /** Sub-doppler preset seen in read chain */
 export function cmdSetSubDopplerDefault(): string {
   return 'SetSubDoppler 10000 10000 10000 10000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000'

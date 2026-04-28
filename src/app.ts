@@ -12,7 +12,12 @@ import {
   syncTimeCommand,
   levelPresetForIndex,
 } from './protocol'
-import { cmdComOutputCfg, cmdSetDetSensitivity, computeDetSensitivityO } from './n1-commands'
+import {
+  cmdComOutputCfg,
+  cmdSetBGLearnStatus,
+  cmdSetDetSensitivity,
+  computeDetSensitivityO,
+} from './n1-commands'
 import {
   parseLatestFramePoints,
   RANGE_MAX,
@@ -362,6 +367,7 @@ function pageConfigure(): string {
         <div class="btn-grid">
           <button type="button" class="btn btn-secondary" id="btn-read-cfg">Read config</button>
           <button type="button" class="btn btn-primary" id="btn-save-cfg">Save to radar</button>
+          <button type="button" class="btn btn-secondary" id="btn-learn-bg">Lifting learn</button>
           <button type="button" class="btn btn-secondary" id="btn-sync-time">Sync time</button>
           <button type="button" class="btn btn-secondary" id="btn-get-ver">Get version</button>
         </div>
@@ -725,6 +731,7 @@ function bindConfigure(): void {
   const nearLbl = document.getElementById('near-lbl')
   const saveBtn = document.getElementById('btn-save-cfg') as HTMLButtonElement | null
   const readBtn = document.getElementById('btn-read-cfg') as HTMLButtonElement | null
+  const learnBtn = document.getElementById('btn-learn-bg') as HTMLButtonElement | null
   const syncBtn = document.getElementById('btn-sync-time') as HTMLButtonElement | null
   const verBtn = document.getElementById('btn-get-ver') as HTMLButtonElement | null
   let configureDirty = false
@@ -734,6 +741,7 @@ function bindConfigure(): void {
     const connected = !!getActiveSession()?.connected
     if (saveBtn) saveBtn.disabled = !connected || !configureDirty || configureBusy
     if (readBtn) readBtn.disabled = !connected || configureBusy
+    if (learnBtn) learnBtn.disabled = !connected || configureBusy
     if (syncBtn) syncBtn.disabled = !connected || configureBusy
     if (verBtn) verBtn.disabled = !connected || configureBusy
   }
@@ -971,6 +979,75 @@ function bindConfigure(): void {
         toast('Time sync command sent')
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'BLE error'
+        setPersistentError(msg)
+        toast(msg, false)
+      } finally {
+        setConfigureBusy(false)
+      }
+    })()
+  })
+
+  document.getElementById('btn-learn-bg')?.addEventListener('click', () => {
+    const s = getActiveSession()
+    if (!s?.connected) {
+      toast('Connect under Connect tab first', false)
+      return
+    }
+    if (
+      !confirm('Use remote control to raise the boom first, then press OK to continue background learning.')
+    ) {
+      return
+    }
+    if (
+      !confirm(
+        'Safety check: confirm boom is raised. Keep people/vehicles out of both sides of the 2.0 m learning area.'
+      )
+    ) {
+      return
+    }
+    void (async () => {
+      setConfigureBusy(true)
+      try {
+        s.clearRxLog()
+        const startLen = s.rxLog.length
+        toast('Lifting background learning in progress...')
+        await s.enqueueWrite(cmdSetBGLearnStatus(2))
+        await s.waitForText(/Done|Error\s*-?\d*|Learn|Finish/i, 8_000).catch(() => {})
+
+        const deadline = Date.now() + 65_000
+        let sawDone = false
+        let sawLearnish = false
+        while (Date.now() < deadline) {
+          const delta = s.rxLog.slice(startLen)
+          if (/Error\s*-?\d*/i.test(delta)) {
+            const line = delta
+              .split(/\r?\n/)
+              .map((x) => x.trim())
+              .filter(Boolean)
+              .find((x) => /Error\s*-?\d*/i.test(x))
+            const msg = `Lifting learn failed: ${line || 'Error from firmware'}`
+            setPersistentError(msg)
+            toast(msg, false)
+            return
+          }
+          if (/Done/i.test(delta)) sawDone = true
+          if (/Learn|Finish|学习/i.test(delta)) sawLearnish = true
+          if (sawDone && sawLearnish) {
+            toast('Learning completed (log markers detected)')
+            return
+          }
+          if (sawDone && Date.now() > deadline - 55_000) {
+            toast('Learning command accepted (Done). Check live log for additional markers.')
+            return
+          }
+          await new Promise((resolve) => setTimeout(resolve, 350))
+        }
+        const tail = s.rxLog.slice(startLen).slice(-260)
+        const msg = `Learning timeout — no completion marker detected. Tail: ${tail || 'no additional log'}`
+        setPersistentError(msg)
+        toast('Learning timeout — check log', false)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Learning failed'
         setPersistentError(msg)
         toast(msg, false)
       } finally {
