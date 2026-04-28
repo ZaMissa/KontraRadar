@@ -2,14 +2,14 @@
   "name": "Radar Debug — mmWave tools",
   "short_name": "Radar Debug",
   "description": "English-first companion for mmWave radar setup: BLE connect, configuration, target map, and device tools.",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#007aff",
   "lang": "en",
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "./favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
