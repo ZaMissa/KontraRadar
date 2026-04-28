@@ -368,6 +368,8 @@ function pageConfigure(): string {
           <button type="button" class="btn btn-secondary" id="btn-read-cfg">Read config</button>
           <button type="button" class="btn btn-primary" id="btn-save-cfg">Save to radar</button>
           <button type="button" class="btn btn-secondary" id="btn-learn-bg">Lifting learn</button>
+          <button type="button" class="btn btn-secondary" id="btn-read-learn-bg">Read learn BG (8)</button>
+          <button type="button" class="btn btn-secondary" id="btn-read-learn-move">Read learn move (9)</button>
           <button type="button" class="btn btn-secondary" id="btn-sync-time">Sync time</button>
           <button type="button" class="btn btn-secondary" id="btn-get-ver">Get version</button>
         </div>
@@ -732,6 +734,8 @@ function bindConfigure(): void {
   const saveBtn = document.getElementById('btn-save-cfg') as HTMLButtonElement | null
   const readBtn = document.getElementById('btn-read-cfg') as HTMLButtonElement | null
   const learnBtn = document.getElementById('btn-learn-bg') as HTMLButtonElement | null
+  const readLearnBgBtn = document.getElementById('btn-read-learn-bg') as HTMLButtonElement | null
+  const readLearnMoveBtn = document.getElementById('btn-read-learn-move') as HTMLButtonElement | null
   const syncBtn = document.getElementById('btn-sync-time') as HTMLButtonElement | null
   const verBtn = document.getElementById('btn-get-ver') as HTMLButtonElement | null
   let configureDirty = false
@@ -742,6 +746,8 @@ function bindConfigure(): void {
     if (saveBtn) saveBtn.disabled = !connected || !configureDirty || configureBusy
     if (readBtn) readBtn.disabled = !connected || configureBusy
     if (learnBtn) learnBtn.disabled = !connected || configureBusy
+    if (readLearnBgBtn) readLearnBgBtn.disabled = !connected || configureBusy
+    if (readLearnMoveBtn) readLearnMoveBtn.disabled = !connected || configureBusy
     if (syncBtn) syncBtn.disabled = !connected || configureBusy
     if (verBtn) verBtn.disabled = !connected || configureBusy
   }
@@ -834,6 +840,42 @@ function bindConfigure(): void {
       toast(msg, false)
     } finally {
       setConfigureBusy(false)
+    }
+  }
+
+  const readLearningData = async (
+    cmd: 'ReadRadeConfig 8' | 'ReadRadeConfig 9',
+    manageBusy = true
+  ): Promise<string> => {
+    const s = getActiveSession()
+    if (!s?.connected) {
+      toast('Connect under Connect tab first', false)
+      return ''
+    }
+    if (manageBusy) setConfigureBusy(true)
+    try {
+      const start = s.rxLog.length
+      await s.enqueueWrite(cmd)
+      await s.waitForText(/Done|Error\s*-?\d*/i, 20_000).catch(() => {})
+      const delta = s.rxLog.slice(start)
+      const marker =
+        cmd === 'ReadRadeConfig 8'
+          ? /BGDATA|Index|Error\s*-?\d*/i.test(delta)
+          : /MDATA|Index|Error\s*-?\d*/i.test(delta)
+      if (marker) {
+        setPersistentError(`${cmd} returned markers. Check Live from radar for full payload.`)
+      } else {
+        setPersistentError(`${cmd} completed but no expected learning markers were detected.`)
+      }
+      toast(`${cmd} completed`)
+      return delta
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : `${cmd} failed`
+      setPersistentError(msg)
+      toast(msg, false)
+      return ''
+    } finally {
+      if (manageBusy) setConfigureBusy(false)
     }
   }
 
@@ -987,6 +1029,13 @@ function bindConfigure(): void {
     })()
   })
 
+  document.getElementById('btn-read-learn-bg')?.addEventListener('click', () => {
+    void readLearningData('ReadRadeConfig 8')
+  })
+  document.getElementById('btn-read-learn-move')?.addEventListener('click', () => {
+    void readLearningData('ReadRadeConfig 9')
+  })
+
   document.getElementById('btn-learn-bg')?.addEventListener('click', () => {
     const s = getActiveSession()
     if (!s?.connected) {
@@ -1017,6 +1066,7 @@ function bindConfigure(): void {
         const deadline = Date.now() + 65_000
         let sawDone = false
         let sawLearnish = false
+        let earlyError: string | null = null
         while (Date.now() < deadline) {
           const delta = s.rxLog.slice(startLen)
           if (/Error\s*-?\d*/i.test(delta)) {
@@ -1025,10 +1075,8 @@ function bindConfigure(): void {
               .map((x) => x.trim())
               .filter(Boolean)
               .find((x) => /Error\s*-?\d*/i.test(x))
-            const msg = `Lifting learn failed: ${line || 'Error from firmware'}`
-            setPersistentError(msg)
-            toast(msg, false)
-            return
+            earlyError = `Lifting learn failed: ${line || 'Error from firmware'}`
+            break
           }
           if (/Done/i.test(delta)) sawDone = true
           if (/Learn|Finish|学习/i.test(delta)) sawLearnish = true
@@ -1042,10 +1090,34 @@ function bindConfigure(): void {
           }
           await new Promise((resolve) => setTimeout(resolve, 350))
         }
+
+        const bgSnap = await readLearningData('ReadRadeConfig 8', false)
+        const mdSnap = await readLearningData('ReadRadeConfig 9', false)
+
+        const mergedSnap = `${bgSnap}\n${mdSnap}`
+        const gotBg = /BGDATA|Index/i.test(mergedSnap)
+        const gotMd = /MDATA|Index/i.test(mergedSnap)
+
+        if (earlyError) {
+          const tail = mergedSnap.slice(-260)
+          const msg = `${earlyError} | Probe tail: ${tail || 'no probe data'}`
+          setPersistentError(msg)
+          toast('Learning failed (probe captured)', false)
+          return
+        }
+
+        if (gotBg || gotMd) {
+          const tags = [gotBg ? 'BGDATA' : '', gotMd ? 'MDATA' : ''].filter(Boolean).join(', ')
+          const msg = `Learning command accepted; captured learning data markers via ReadRadeConfig 8/9: ${tags}.`
+          setPersistentError(msg)
+          toast('Learning data captured via readback')
+          return
+        }
+
         const tail = s.rxLog.slice(startLen).slice(-260)
-        const msg = `Learning timeout — no completion marker detected. Tail: ${tail || 'no additional log'}`
+        const msg = `Learning accepted but no streaming/probe markers found. Tail: ${tail || 'no additional log'}`
         setPersistentError(msg)
-        toast('Learning timeout — check log', false)
+        toast('Learning accepted; no markers yet', false)
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Learning failed'
         setPersistentError(msg)

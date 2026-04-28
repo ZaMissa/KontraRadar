@@ -195,6 +195,28 @@ async function runTargetSample(): Promise<void> {
   }
 }
 
+async function runLearningDataRead(mode: 8 | 9): Promise<void> {
+  const cmd = `ReadRadeConfig ${mode}`
+  appendEvent(`Learning data read started: ${cmd}`)
+  try {
+    const s = await requireSession()
+    const start = s.rxLog.length
+    await s.enqueueWrite(cmd)
+    await s.waitForText(/Done|Error\s*-?\d*/i, 20_000).catch(() => {})
+    const delta = s.rxLog.slice(start)
+    const hasMarkers = mode === 8 ? /BGDATA|Index/i.test(delta) : /MDATA|Index/i.test(delta)
+    appendEvent(
+      hasMarkers
+        ? `${cmd} completed with expected learning markers`
+        : `${cmd} completed with no expected learning markers`
+    )
+    syncBenchRx()
+  } catch (e) {
+    appendEvent(`${cmd} failed: ${e instanceof Error ? e.message : 'error'}`)
+    throw e
+  }
+}
+
 function downloadText(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -280,6 +302,15 @@ export function pageBenchLabHtml(): string {
         <div class="row between"><span>3) COM sample (COMOutputCfg 8 for 12s)</span><span id="bench-step3-status" class="badge">Idle</span></div>
         <button class="btn btn-secondary" id="bench-run-step3">Run Step 3</button>
         <button class="btn btn-primary" id="bench-run-all">Run Full Bench Workflow</button>
+      </div>
+
+      <div class="card stack">
+        <h2 class="card-title tight">Learning data probes</h2>
+        <p class="hint">Manual OEM-style reads for learning diagnostics after or during learning.</p>
+        <div class="row gap">
+          <button class="btn btn-secondary flex-1" id="bench-read-learn-bg">Read learn BG (8)</button>
+          <button class="btn btn-secondary flex-1" id="bench-read-learn-move">Read learn move (9)</button>
+        </div>
       </div>
 
       <div class="card row gap wrap">
@@ -375,6 +406,16 @@ export function bindBenchLabPage(): void {
         toast(e instanceof Error ? e.message : 'Workflow failed', false)
       }
     })()
+  })
+  document.getElementById('bench-read-learn-bg')?.addEventListener('click', () => {
+    void runLearningDataRead(8)
+      .then(() => toast('ReadRadeConfig 8 completed'))
+      .catch((e) => toast(e instanceof Error ? e.message : 'ReadRadeConfig 8 failed', false))
+  })
+  document.getElementById('bench-read-learn-move')?.addEventListener('click', () => {
+    void runLearningDataRead(9)
+      .then(() => toast('ReadRadeConfig 9 completed'))
+      .catch((e) => toast(e instanceof Error ? e.message : 'ReadRadeConfig 9 failed', false))
   })
 
   document.getElementById('bench-autoscroll')?.addEventListener('change', (ev) => {
