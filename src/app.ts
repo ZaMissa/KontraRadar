@@ -12,7 +12,15 @@ import {
   syncTimeCommand,
   levelPresetForIndex,
 } from './protocol'
-import { cmdSetDetSensitivity, computeDetSensitivityO } from './n1-commands'
+import { cmdComOutputCfg, cmdSetDetSensitivity, computeDetSensitivityO } from './n1-commands'
+import {
+  parseLatestFramePoints,
+  RANGE_MAX,
+  RANGE_MIN,
+  ACROSS_MIN,
+  ACROSS_MAX,
+  type TargetPoint,
+} from './parse-target-stream'
 import { parseReadRadeConfigToConfigure, type ParsedConfigureForm } from './parse-read-config'
 import { toast } from './toast'
 import {
@@ -29,12 +37,12 @@ import {
 import {
   bindAdvancedPage,
   bindInstructionsPage,
-  bindTargetExtras,
   firmwarePageHtml,
   pageAdvancedHtml,
   pageInstructionsHtml,
   supportPageHtml,
   targetExtrasHtml,
+  runBle,
 } from './pages-n1'
 import { bindBenchLabPage, pageBenchLabHtml } from './bench-lab'
 import { runQueueWithFirmwareDiagnostics } from './save-diagnostics'
@@ -74,7 +82,7 @@ function setHash(route: Route): void {
   location.hash = `#/${route}`
 }
 
-let targetMapRaf = 0
+let targetPageCleanup: (() => void) | null = null
 let targetMapCanvas: HTMLCanvasElement | null = null
 let rxUnsub: (() => void) | null = null
 
@@ -400,7 +408,7 @@ function pageTarget(): string {
       <div class="card pad-0 target-viz-card">
         <div class="target-viz-head row between">
           <span class="target-viz-title">Detection plane</span>
-          <span class="badge badge-soft">Demo motion</span>
+          <span class="badge badge-soft" id="target-live-badge">—</span>
         </div>
         <div class="target-canvas-wrap">
           <canvas id="target-canvas" width="340" height="280" aria-label="Target scatter plot"></canvas>
@@ -410,10 +418,10 @@ function pageTarget(): string {
       </div>
       <div class="card stats-row row between">
         <div>
-          <span class="stats-label">Tracks (sim)</span>
+          <span class="stats-label">Points (last frame)</span>
           <strong class="stats-value" id="target-count">0</strong>
         </div>
-        <div class="stats-hint muted">Replace with parsed COM / CAN targets when wired.</div>
+        <div class="stats-hint muted" id="target-hint">Connect BLE, then tap Start COMOutputCfg 8.</div>
       </div>
       ${targetExtrasHtml()}
     </section>
@@ -552,6 +560,8 @@ function pageBench(): string {
 function renderMain(route: Route): void {
   rxUnsub?.()
   rxUnsub = null
+  targetPageCleanup?.()
+  targetPageCleanup = null
 
   const pane = document.getElementById('main-pane')
   if (!pane) return
@@ -571,10 +581,7 @@ function renderMain(route: Route): void {
   pane.innerHTML = pages[route]()
 
   if (route === 'configure') bindConfigure()
-  if (route === 'target') {
-    bindTargetMap()
-    bindTargetExtras()
-  }
+  if (route === 'target') bindTargetPage()
   if (route === 'settings') bindSettings()
   if (route === 'advanced') bindAdvancedPage()
   if (route === 'instructions') bindInstructionsPage()
@@ -716,11 +723,38 @@ function bindConfigure(): void {
   const poleLbl = document.getElementById('pole-m-lbl')
   const near = document.getElementById('near') as HTMLInputElement | null
   const nearLbl = document.getElementById('near-lbl')
+  const saveBtn = document.getElementById('btn-save-cfg') as HTMLButtonElement | null
+  const readBtn = document.getElementById('btn-read-cfg') as HTMLButtonElement | null
+  const syncBtn = document.getElementById('btn-sync-time') as HTMLButtonElement | null
+  const verBtn = document.getElementById('btn-get-ver') as HTMLButtonElement | null
+  let configureDirty = false
+  let configureBusy = false
+
+  const updateActionButtons = () => {
+    const connected = !!getActiveSession()?.connected
+    if (saveBtn) saveBtn.disabled = !connected || !configureDirty || configureBusy
+    if (readBtn) readBtn.disabled = !connected || configureBusy
+    if (syncBtn) syncBtn.disabled = !connected || configureBusy
+    if (verBtn) verBtn.disabled = !connected || configureBusy
+  }
+  const markConfigureDirty = () => {
+    configureDirty = true
+    updateActionButtons()
+  }
+  const markConfigureClean = () => {
+    configureDirty = false
+    updateActionButtons()
+  }
+  const setConfigureBusy = (busy: boolean) => {
+    configureBusy = busy
+    updateActionButtons()
+  }
 
   document.querySelectorAll<HTMLElement>('[data-orient]').forEach((el) => {
     el.addEventListener('click', () => {
       document.querySelectorAll<HTMLElement>('[data-orient]').forEach((n) => n.classList.remove('seg-active'))
       el.classList.add('seg-active')
+      markConfigureDirty()
     })
   })
 
@@ -735,19 +769,24 @@ function bindConfigure(): void {
     if (canvas) drawRing(canvas, clamped)
   }
   rng?.addEventListener('input', updLevel)
+  rng?.addEventListener('change', markConfigureDirty)
   updLevel()
 
   const updPole = () => {
     if (poleLbl && poleM) poleLbl.textContent = Number(poleM.value).toFixed(1)
   }
   poleM?.addEventListener('input', updPole)
+  poleM?.addEventListener('change', markConfigureDirty)
   updPole()
 
   const updNear = () => {
     if (nearLbl && near) nearLbl.textContent = near.value
   }
   near?.addEventListener('input', updNear)
+  near?.addEventListener('change', markConfigureDirty)
   updNear()
+  document.getElementById('pole-type')?.addEventListener('change', markConfigureDirty)
+  updateActionButtons()
 
   const setPersistentError = (msg: string): void => {
     const pre = document.getElementById('cfg-last-error')
@@ -777,6 +816,7 @@ function bindConfigure(): void {
       toast('Connect under Connect tab first', false)
       return
     }
+    setConfigureBusy(true)
     try {
       await fn(s)
       toast('Done')
@@ -784,6 +824,8 @@ function bindConfigure(): void {
       const msg = e instanceof Error ? e.message : 'BLE error'
       setPersistentError(msg)
       toast(msg, false)
+    } finally {
+      setConfigureBusy(false)
     }
   }
 
@@ -794,6 +836,7 @@ function bindConfigure(): void {
       return
     }
     void (async () => {
+      setConfigureBusy(true)
       try {
         toast('Reading radar configuration...')
         s.clearRxLog()
@@ -801,10 +844,13 @@ function bindConfigure(): void {
         await s.waitForText(/Done/i, 12_000)
         const parsed = parseReadRadeConfigToConfigure(s.rxLog)
         const n = applyParsedConfigureToForm(parsed)
+        markConfigureClean()
         if (n > 0) toast('Radar configuration read complete')
         else toast('Read complete — no configure keys parsed (see log)')
       } catch (e) {
         toast(e instanceof Error ? e.message : 'BLE error', false)
+      } finally {
+        setConfigureBusy(false)
       }
     })()
   })
@@ -824,6 +870,7 @@ function bindConfigure(): void {
         } else {
           toast('Radar configuration save complete')
         }
+        markConfigureClean()
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Save failed'
         const sensitivityRejected =
@@ -856,6 +903,7 @@ function bindConfigure(): void {
             rng.value = String(appliedFallbackIndex)
             rng.dispatchEvent(new Event('input'))
           }
+          markConfigureClean()
           return
         }
 
@@ -891,6 +939,7 @@ function bindConfigure(): void {
             rng.value = String(detAppliedIndex)
             rng.dispatchEvent(new Event('input'))
           }
+          markConfigureClean()
           return
         }
 
@@ -910,6 +959,7 @@ function bindConfigure(): void {
       return
     }
     void (async () => {
+      setConfigureBusy(true)
       try {
         const res = await runQueueWithFirmwareDiagnostics(s, [syncTimeCommand()], 6000)
         if (res.warnings.length > 0) {
@@ -923,6 +973,8 @@ function bindConfigure(): void {
         const msg = e instanceof Error ? e.message : 'BLE error'
         setPersistentError(msg)
         toast(msg, false)
+      } finally {
+        setConfigureBusy(false)
       }
     })()
   })
@@ -938,58 +990,180 @@ function bindConfigure(): void {
   })
 }
 
-interface Point {
-  x: number
-  y: number
-  vx: number
-  vy: number
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n))
 }
 
-function bindTargetMap(): void {
+function drawTargetCanvas(canvas: HTMLCanvasElement, points: TargetPoint[]): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const w = canvas.width
+  const h = canvas.height
+  const padL = 42
+  const padR = 14
+  const padT = 22
+  const padB = 34
+  const iw = w - padL - padR
+  const ih = h - padT - padB
+
+  ctx.fillStyle = '#f8f9fb'
+  ctx.fillRect(0, 0, w, h)
+
+  ctx.strokeStyle = '#dde1e6'
+  ctx.lineWidth = 1
+  ctx.strokeRect(padL, padT, iw, ih)
+
+  ctx.strokeStyle = '#eef1f4'
+  for (let m = 1; m < RANGE_MAX; m++) {
+    const gx = padL + (m / RANGE_MAX) * iw
+    ctx.beginPath()
+    ctx.moveTo(gx, padT)
+    ctx.lineTo(gx, padT + ih)
+    ctx.stroke()
+  }
+  const acrossTicks = [-4, -2, 0, 2, 4]
+  for (const ax of acrossTicks) {
+    const gy = padT + ((ax - ACROSS_MIN) / (ACROSS_MAX - ACROSS_MIN)) * ih
+    ctx.beginPath()
+    ctx.moveTo(padL, gy)
+    ctx.lineTo(padL + iw, gy)
+    ctx.stroke()
+  }
+
+  const y0 = padT + ((0 - ACROSS_MIN) / (ACROSS_MAX - ACROSS_MIN)) * ih
+  ctx.strokeStyle = '#c5ccd6'
+  ctx.setLineDash([4, 4])
+  ctx.beginPath()
+  ctx.moveTo(padL, y0)
+  ctx.lineTo(padL + iw, y0)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  ctx.fillStyle = '#86868b'
+  ctx.font = '11px system-ui'
+  ctx.fillText(`${RANGE_MIN}m`, padL, padT + ih + 14)
+  ctx.fillText(`${RANGE_MAX}m`, padL + iw - 22, padT + ih + 14)
+
+  for (const pt of points) {
+    const xr = clamp(pt.y, RANGE_MIN, RANGE_MAX)
+    const xa = clamp(pt.x, ACROSS_MIN, ACROSS_MAX)
+    const px = padL + ((xr - RANGE_MIN) / (RANGE_MAX - RANGE_MIN)) * iw
+    const py = padT + ((xa - ACROSS_MIN) / (ACROSS_MAX - ACROSS_MIN)) * ih
+    const r = Math.min(9, Math.max(2.5, Math.log10(pt.p + 10)))
+    ctx.beginPath()
+    ctx.arc(px, py, r, 0, Math.PI * 2)
+    const edge =
+      pt.y < RANGE_MIN - 0.01 ||
+      pt.y > RANGE_MAX + 0.01 ||
+      pt.x < ACROSS_MIN - 0.01 ||
+      pt.x > ACROSS_MAX + 0.01
+    ctx.fillStyle = edge ? 'rgba(255,149,0,0.75)' : 'rgba(0,122,255,0.88)'
+    ctx.fill()
+  }
+}
+
+function bindTargetPage(): void {
   targetMapCanvas = document.getElementById('target-canvas') as HTMLCanvasElement | null
   const countEl = document.getElementById('target-count')
+  const badgeEl = document.getElementById('target-live-badge')
+  const hintEl = document.getElementById('target-hint')
+  const pre = document.getElementById('tgt-raw')
   if (!targetMapCanvas || !countEl) return
 
-  const pts: Point[] = Array.from({ length: 12 }, () => ({
-    x: Math.random(),
-    y: Math.random(),
-    vx: (Math.random() - 0.5) * 0.003,
-    vy: (Math.random() - 0.5) * 0.003,
-  }))
+  let latestPoints: TargetPoint[] = []
+  let anim = 0
+  let rafPending = false
 
-  const loop = () => {
-    const c = targetMapCanvas!
-    const ctx = c.getContext('2d')
-    if (!ctx) return
-    const w = c.width
-    const h = c.height
-    ctx.fillStyle = '#f8f9fb'
-    ctx.fillRect(0, 0, w, h)
-    ctx.strokeStyle = '#dde1e6'
-    ctx.lineWidth = 1
-    ctx.strokeRect(40, 20, w - 80, h - 40)
-    ctx.fillStyle = '#86868b'
-    ctx.font = '11px system-ui'
-    ctx.fillText('Range →', w - 72, h - 8)
-
-    for (const p of pts) {
-      p.x += p.vx
-      p.y += p.vy
-      if (p.x < 0.05 || p.x > 0.95) p.vx *= -1
-      if (p.y < 0.08 || p.y > 0.92) p.vy *= -1
-      const px = 40 + p.x * (w - 80)
-      const py = 20 + p.y * (h - 40)
-      ctx.beginPath()
-      ctx.arc(px, py, 5, 0, Math.PI * 2)
-      ctx.fillStyle = '#007aff'
-      ctx.fill()
+  const syncBadgeAndHint = (sess: ReturnType<typeof getActiveSession>) => {
+    const n = latestPoints.length
+    countEl.textContent = String(n)
+    const conn = !!sess?.connected
+    if (!conn) {
+      if (badgeEl) {
+        badgeEl.textContent = 'BLE offline'
+        badgeEl.className = 'badge badge-warn'
+      }
+      if (hintEl) hintEl.textContent = 'Connect under Connect, then return here and start the stream.'
+      return
     }
-
-    countEl.textContent = String(pts.length)
-    targetMapRaf = requestAnimationFrame(loop)
+    if (n < 1) {
+      if (badgeEl) {
+        badgeEl.textContent = 'Waiting…'
+        badgeEl.className = 'badge badge-soft'
+      }
+      if (hintEl)
+        hintEl.textContent =
+          'Tap “Start COMOutputCfg 8” — plots parse lines like x=…,y=…,p=… from the notify log.'
+      return
+    }
+    if (badgeEl) {
+      badgeEl.textContent = 'Live'
+      badgeEl.className = 'badge badge-ok'
+    }
+    if (hintEl)
+      hintEl.textContent =
+        'Horizontal: range (0–7 m). Vertical: across (−4…4 m). Dot size scales with log(power).'
   }
-  cancelAnimationFrame(targetMapRaf)
-  loop()
+
+  const flushDraw = () => {
+    if (targetMapCanvas) drawTargetCanvas(targetMapCanvas, latestPoints)
+    syncBadgeAndHint(getActiveSession())
+  }
+
+  const scheduleDraw = () => {
+    if (rafPending) return
+    rafPending = true
+    cancelAnimationFrame(anim)
+    anim = requestAnimationFrame(() => {
+      rafPending = false
+      flushDraw()
+    })
+  }
+
+  const onRx = () => {
+    const sess = getActiveSession()
+    const log = sess?.rxLog ?? ''
+    if (pre) pre.textContent = log.length > 4000 ? log.slice(-4000) : log
+    latestPoints = parseLatestFramePoints(log)
+    scheduleDraw()
+  }
+
+  drawTargetCanvas(targetMapCanvas, [])
+  syncBadgeAndHint(getActiveSession())
+
+  let unsub: (() => void) | undefined
+  const sess = getActiveSession()
+  if (sess) unsub = sess.onRx(onRx)
+  else onRx()
+
+  document.getElementById('tgt-start')?.addEventListener('click', () => {
+    runBle(async (s) => {
+      await s.enqueueWrite(cmdComOutputCfg(8))
+    })
+  })
+  document.getElementById('tgt-stop')?.addEventListener('click', () => {
+    runBle(async (s) => {
+      await s.enqueueWrite(cmdComOutputCfg(0))
+    })
+  })
+  document.getElementById('tgt-snapshot')?.addEventListener('click', () => {
+    onRx()
+    toast('Snapshot captured')
+  })
+  document.getElementById('tgt-copy')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(pre?.textContent || '')
+      toast('Tail copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
+  })
+
+  targetPageCleanup = () => {
+    unsub?.()
+    cancelAnimationFrame(anim)
+    latestPoints = []
+  }
 }
 
 function bindSettings(): void {
@@ -1166,7 +1340,7 @@ export function initApp(): void {
   navigate()
 
   window.addEventListener('beforeunload', () => {
-    cancelAnimationFrame(targetMapRaf)
+    targetPageCleanup?.()
     rxUnsub?.()
   })
 }

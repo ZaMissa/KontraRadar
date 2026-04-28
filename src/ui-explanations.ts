@@ -55,13 +55,11 @@ export const configure = {
 } as const
 
 export const target = {
-  lede: `Plan view is range versus lateral position. The animated dots here are placeholders only. Real targets
-    would come from decoding the radar’s UART/COM protocol once <code>COMOutputCfg</code> streams data — same
-    idea as the vendor Targets tab.`,
-  extras: `<code>COMOutputCfg 8</code> starts forwarding target-style output on the integrated serial path;
-    <code>COMOutputCfg 0</code> stops it (<code>n1</code> target map page). Raw bytes still appear as text in the
-    session log until a binary parser exists. Keep clearance per the manual: no blocking objects in the lane,
-    rigid mounting.`,
+  lede: `Plan view matches vendor semantics: horizontal axis is down-range (m), vertical axis is across-track (m).
+    After <code>COMOutputCfg 8</code>, the firmware emits ASCII lines like <code>x=… ,y=… ,p=…</code> on the same BLE
+    notify channel — dots here are parsed from that log (latest <code>Frame:</code> block when present).`,
+  extras: `<code>COMOutputCfg 8</code> starts forwarding target-style output on the serial/BLE path;
+    <code>COMOutputCfg 0</code> stops it (same as <code>n1</code> 目标图). The tail of the notify buffer is mirrored below for debugging.`,
 } as const
 
 export const more = {

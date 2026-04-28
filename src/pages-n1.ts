@@ -7,7 +7,6 @@ import { toast } from './toast'
 import { LEVEL_CODES, LEVEL_PRESETS, levelPresetForIndex } from './protocol'
 import {
   buildAdvancedSaveCommands,
-  cmdComOutputCfg,
   cmdReadRadeConfig,
   cmdResetRadeConfig,
   cmdReboot,
@@ -44,7 +43,8 @@ function esc(s: string): string {
   return d.innerHTML
 }
 
-function runBle(fn: (s: RadarSession) => Promise<void>): void {
+/** Shared BLE action helper — toast on success/failure. */
+export function runBle(fn: (s: RadarSession) => Promise<void>): void {
   const s = getActiveSession()
   if (!s?.connected) {
     toast('Connect BLE first (Connect tab)', false)
@@ -324,7 +324,7 @@ export function applyParsedAdvancedToForm(parsed: ParsedAdvancedConfig): number 
   const levelSel = document.getElementById('adv-level') as HTMLSelectElement | null
   if (levelSel && p.levelValue !== undefined) {
     const v = p.levelValue
-    if (![...levelSel.options].some((o) => o.value === v)) {
+    if (!Array.from(levelSel.options).some((o) => o.value === v)) {
       const opt = document.createElement('option')
       opt.value = v
       opt.textContent = v
@@ -406,9 +406,67 @@ export function bindAdvancedPage(): void {
   bindSegGroup('[data-adv-gpio]')
   bindSegGroup('[data-adv-ble]')
   bindSegGroup('[data-adv-lf]')
+  const saveBtn = document.getElementById('adv-save') as HTMLButtonElement | null
+  const readBtn = document.getElementById('adv-read') as HTMLButtonElement | null
+  const rebootBtn = document.getElementById('adv-reboot') as HTMLButtonElement | null
+  const resetBtn = document.getElementById('adv-reset') as HTMLButtonElement | null
+  let advancedDirty = false
+  let rebootPending = false
+  let advancedBusy = false
+  const updateActionButtons = () => {
+    const connected = !!getActiveSession()?.connected
+    const locked = rebootPending || advancedBusy
+    if (saveBtn) saveBtn.disabled = !connected || !advancedDirty || locked
+    if (readBtn) readBtn.disabled = !connected || locked
+    if (rebootBtn) rebootBtn.disabled = !connected || locked
+    if (resetBtn) resetBtn.disabled = !connected || locked
+  }
+  const markAdvancedDirty = () => {
+    advancedDirty = true
+    updateActionButtons()
+  }
+  const markAdvancedClean = () => {
+    advancedDirty = false
+    updateActionButtons()
+  }
+  const setAdvancedBusy = (busy: boolean) => {
+    advancedBusy = busy
+    updateActionButtons()
+  }
+  const runAdvancedBle = (fn: (s: RadarSession) => Promise<void>): void => {
+    const s = getActiveSession()
+    if (!s?.connected) {
+      toast('Connect BLE first (Connect tab)', false)
+      return
+    }
+    setAdvancedBusy(true)
+    void (async () => {
+      try {
+        await fn(s)
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Error', false)
+      } finally {
+        setAdvancedBusy(false)
+      }
+    })()
+  }
+  document
+    .querySelectorAll<HTMLElement>(
+      '[data-adv-judge], [data-adv-pass], [data-adv-gpio], [data-adv-ble], [data-adv-lf]'
+    )
+    .forEach((el) => el.addEventListener('click', markAdvancedDirty))
+  document
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+      '#adv-model, #adv-fw, #adv-level, #adv-lightout, #adv-sc82, #adv-near, #adv-lmid, #adv-rmid, #adv-left, #adv-right, #adv-rj, #adv-mpf, #adv-t1, #adv-t2, #adv-t3, #adv-t4, #adv-c1, #adv-c2, #adv-c3, #adv-c4, #adv-slon'
+    )
+    .forEach((el) => {
+      el.addEventListener('input', markAdvancedDirty)
+      el.addEventListener('change', markAdvancedDirty)
+    })
 
   document.getElementById('adv-level')?.addEventListener('change', syncAdvPresetBlurb)
   syncAdvPresetBlurb()
+  updateActionButtons()
 
   const rx = document.getElementById('adv-rx')
   const sess = getActiveSession()
@@ -450,6 +508,7 @@ export function bindAdvancedPage(): void {
       toast('Connect BLE first (Connect tab)', false)
       return
     }
+    setAdvancedBusy(true)
     void (async () => {
       try {
         const snap = readAdvSnapshot()
@@ -463,12 +522,15 @@ export function bindAdvancedPage(): void {
           snap.firmwareMainVer || 30
         )
         const n = applyParsedAdvancedToForm(parsed)
+        markAdvancedClean()
         if (n > 0) toast('Radar configuration read complete')
         else toast('Read complete — no parsed KEY: lines (check log below)')
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Error'
         setPersistentError(msg)
         toast(msg, false)
+      } finally {
+        setAdvancedBusy(false)
       }
     })()
   })
@@ -477,7 +539,7 @@ export function bindAdvancedPage(): void {
     if (!confirm('Save current radar configuration?')) return
     const snap = readAdvSnapshot()
     patchState({ deviceModel: snap.deviceModel, firmwareMainVer: snap.firmwareMainVer })
-    runBle(async (s) => {
+    runAdvancedBle(async (s) => {
       toast('Saving radar configuration...')
       const cmds = buildAdvancedSaveCommands(snap)
       try {
@@ -489,6 +551,7 @@ export function bindAdvancedPage(): void {
         } else {
           toast('Radar configuration save complete')
         }
+        markAdvancedClean()
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Save failed'
         setPersistentError(msg)
@@ -498,14 +561,17 @@ export function bindAdvancedPage(): void {
   })
 
   document.getElementById('adv-reboot')?.addEventListener('click', () => {
-    runBle(async (s) => {
+    runAdvancedBle(async (s) => {
       await s.enqueueWrite(cmdReboot())
+      rebootPending = true
+      setPersistentError('Reboot command sent. Reconnect BLE before further actions.')
+      updateActionButtons()
     })
   })
 
   document.getElementById('adv-reset')?.addEventListener('click', () => {
     if (!confirm('Factory reset radar config?')) return
-    runBle(async (s) => {
+    runAdvancedBle(async (s) => {
       await s.enqueueWrite(cmdResetRadeConfig())
     })
   })
@@ -599,42 +665,6 @@ export function targetExtrasHtml(): string {
       </label>
     </div>
   `
-}
-
-export function bindTargetExtras(): void {
-  const pre = document.getElementById('tgt-raw')
-  const sess = getActiveSession()
-  const sync = () => {
-    if (pre && sess) {
-      const t = sess.rxLog
-      pre.textContent = t.length > 4000 ? t.slice(-4000) : t
-    }
-  }
-  if (sess) sess.onRx(() => sync())
-
-  document.getElementById('tgt-start')?.addEventListener('click', () => {
-    runBle(async (s) => {
-      await s.enqueueWrite(cmdComOutputCfg(8))
-    })
-  })
-  document.getElementById('tgt-stop')?.addEventListener('click', () => {
-    runBle(async (s) => {
-      await s.enqueueWrite(cmdComOutputCfg(0))
-    })
-  })
-  document.getElementById('tgt-snapshot')?.addEventListener('click', () => {
-    sync()
-    toast('Snapshot captured')
-  })
-  document.getElementById('tgt-copy')?.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(pre?.textContent || '')
-      toast('Tail copied')
-    } catch {
-      toast('Clipboard blocked', false)
-    }
-  })
-  sync()
 }
 
 export function firmwarePageHtml(): string {
