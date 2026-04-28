@@ -809,12 +809,47 @@ function bindConfigure(): void {
 
   document.getElementById('btn-save-cfg')?.addEventListener('click', () => {
     void runBle(async (s) => {
-      const cmds = buildConfigureCommands(readConfigureForm())
-      const res = await runQueueWithFirmwareDiagnostics(s, cmds, 7000)
-      if (res.warnings.length > 0) {
-        const msg = res.warnings.map((w) => w.message).join('\n')
-        setPersistentError(msg)
-        toast('Saved with firmware guardrail warning(s)', false)
+      const form = readConfigureForm()
+      const cmds = buildConfigureCommands(form)
+      try {
+        const res = await runQueueWithFirmwareDiagnostics(s, cmds, 7000)
+        if (res.warnings.length > 0) {
+          const msg = res.warnings.map((w) => w.message).join('\n')
+          setPersistentError(msg)
+          toast('Saved with firmware guardrail warning(s)', false)
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Save failed'
+        const sensitivityRejected =
+          msg.includes('Save failed at step 5/5: SetParas 4 2') && msg.includes('(Error -1')
+        if (!sensitivityRejected || form.levelIndex <= 1) throw e
+
+        let appliedFallbackIndex: number | null = null
+        for (let idx = form.levelIndex - 1; idx >= 1; idx--) {
+          const fallbackCmd = `SetParas 4 2 ${LEVEL_CODES[idx - 1]!}`
+          try {
+            await runQueueWithFirmwareDiagnostics(s, [fallbackCmd], 7000)
+            appliedFallbackIndex = idx
+            break
+          } catch (fallbackErr) {
+            const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : ''
+            const stillRejected = fallbackMsg.includes('SetParas 4 2') && fallbackMsg.includes('(Error -1')
+            if (!stillRejected) throw fallbackErr
+          }
+        }
+
+        if (appliedFallbackIndex == null) throw e
+        const appliedToken = LEVEL_CODES[appliedFallbackIndex - 1]!
+        const operatorMsg =
+          `Sensitivity tier ${form.levelIndex} was rejected by firmware (Error -1). ` +
+          `Fallback tier ${appliedFallbackIndex} applied (${appliedToken}).`
+        setPersistentError(operatorMsg)
+        toast('Saved with fallback sensitivity tier', false)
+        const rng = document.getElementById('rng-level') as HTMLInputElement | null
+        if (rng) {
+          rng.value = String(appliedFallbackIndex)
+          rng.dispatchEvent(new Event('input'))
+        }
       }
     })
   })
