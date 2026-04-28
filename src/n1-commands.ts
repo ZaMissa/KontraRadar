@@ -79,6 +79,54 @@ export function cmdSetCutArea(index: number, payload: string): string {
   return `SetCutArea [${index}] ${payload}`
 }
 
+function fmtCutNumber(n: number): string {
+  const v = Math.abs(n) < 0.0005 ? 0 : n
+  return v.toFixed(2)
+}
+
+/**
+ * Normalize cut-area payload to vendor-like row format:
+ * `enable xMin xMax yMin yMax`
+ * Accepts either 5 fields (explicit enable) or 4 fields (assumes enable=1).
+ */
+export function normalizeCutAreaPayload(raw: string): string {
+  const cleaned = raw.replace(/,/g, ' ').trim()
+  const parts = cleaned.split(/\s+/).filter(Boolean)
+  if (parts.length !== 4 && parts.length !== 5) {
+    throw new Error('expected 4 or 5 numeric fields')
+  }
+
+  let enable = 1
+  let start = 0
+  if (parts.length === 5) {
+    enable = Number(parts[0])
+    start = 1
+    if (!Number.isFinite(enable) || ![0, 1].includes(Math.trunc(enable))) {
+      throw new Error('enable must be 0 or 1')
+    }
+    enable = Math.trunc(enable)
+  }
+
+  const xMin = Number(parts[start])
+  const xMax = Number(parts[start + 1])
+  const yMin = Number(parts[start + 2])
+  const yMax = Number(parts[start + 3])
+  if (![xMin, xMax, yMin, yMax].every((n) => Number.isFinite(n))) {
+    throw new Error('all cut bounds must be numeric')
+  }
+
+  if (xMin < -4 || xMin > 4 || xMax < -4 || xMax > 4) {
+    throw new Error('X bounds must stay within -4.00..4.00')
+  }
+  if (yMin < 0 || yMin > 7 || yMax < 0 || yMax > 7) {
+    throw new Error('Y bounds must stay within 0.00..7.00')
+  }
+  if (xMin > xMax) throw new Error('X minimum cannot be greater than X maximum')
+  if (yMin > yMax) throw new Error('Y minimum cannot be greater than Y maximum')
+
+  return `${enable} ${fmtCutNumber(xMin)} ${fmtCutNumber(xMax)} ${fmtCutNumber(yMin)} ${fmtCutNumber(yMax)}`
+}
+
 export function cmdSetParas12RangeJudge(spaceSeparated: string): string {
   return `SetParas 1 2 ${spaceSeparated}`
 }
@@ -198,7 +246,14 @@ export function buildAdvancedSaveCommands(s: AdvancedFormSnapshot): string[] {
   const cuts = [s.cut1, s.cut2, s.cut3, s.cut4]
   cuts.forEach((c, i) => {
     const t = c.trim()
-    if (t) out.push(cmdSetCutArea(i + 1, t))
+    if (!t) return
+    try {
+      const normalized = normalizeCutAreaPayload(t)
+      out.push(cmdSetCutArea(i + 1, normalized))
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : 'invalid cut-area format'
+      throw new Error(`Cut [${i + 1}] invalid: ${reason}`)
+    }
   })
 
   return out.map((x) => x.replace(/\s+/g, ' ').trim())

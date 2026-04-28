@@ -795,13 +795,14 @@ function bindConfigure(): void {
     }
     void (async () => {
       try {
+        toast('Reading radar configuration...')
         s.clearRxLog()
         await s.enqueueWrite('ReadRadeConfig 2')
         await s.waitForText(/Done/i, 12_000)
         const parsed = parseReadRadeConfigToConfigure(s.rxLog)
         const n = applyParsedConfigureToForm(parsed)
-        if (n > 0) toast(`Filled ${n} configure field group(s) from reply`)
-        else toast('Read finished — no configure keys parsed (see log)')
+        if (n > 0) toast('Radar configuration read complete')
+        else toast('Read complete — no configure keys parsed (see log)')
       } catch (e) {
         toast(e instanceof Error ? e.message : 'BLE error', false)
       }
@@ -809,7 +810,9 @@ function bindConfigure(): void {
   })
 
   document.getElementById('btn-save-cfg')?.addEventListener('click', () => {
+    if (!confirm('Save current radar configuration?')) return
     void runBle(async (s) => {
+      toast('Saving radar configuration...')
       const form = readConfigureForm()
       const cmds = buildConfigureCommands(form)
       try {
@@ -817,7 +820,9 @@ function bindConfigure(): void {
         if (res.warnings.length > 0) {
           const msg = res.warnings.map((w) => w.message).join('\n')
           setPersistentError(msg)
-          toast('Saved with firmware guardrail warning(s)', false)
+          toast('Save completed with firmware guardrail warning(s)', false)
+        } else {
+          toast('Radar configuration save complete')
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Save failed'

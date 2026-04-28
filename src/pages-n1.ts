@@ -185,8 +185,9 @@ export function pageAdvancedHtml(): string {
         <summary>Cut areas &amp; light-follow string</summary>
         <div class="details-body stack">
           <p class="hint">${collapseHelpWs(advanced.cutBlock)}</p>
-          <label class="field"><span class="field-label">Cut [1]</span><textarea id="adv-c1" rows="2" placeholder="device format"></textarea></label>
-          <label class="field"><span class="field-label">Cut [2]</span><textarea id="adv-c2" rows="2"></textarea></label>
+          <p class="hint">Format: <code>enable xMin xMax yMin yMax</code> (enable is 0 or 1; X in -4..4, Y in 0..7). You can also enter only <code>xMin xMax yMin yMax</code> and save assumes enable=1.</p>
+          <label class="field"><span class="field-label">Cut [1]</span><textarea id="adv-c1" rows="2" placeholder="0 0.00 0.00 0.00 0.00"></textarea></label>
+          <label class="field"><span class="field-label">Cut [2]</span><textarea id="adv-c2" rows="2" placeholder="1 -1.00 3.00 1.00 2.00"></textarea></label>
           <label class="field"><span class="field-label">Cut [3]</span><textarea id="adv-c3" rows="2"></textarea></label>
           <label class="field"><span class="field-label">Cut [4]</span><textarea id="adv-c4" rows="2"></textarea></label>
           <span class="field-label">Light follow (SimpleCfgCommon 16 2)</span>
@@ -452,6 +453,7 @@ export function bindAdvancedPage(): void {
     void (async () => {
       try {
         const snap = readAdvSnapshot()
+        toast('Reading radar configuration...')
         sess.clearRxLog()
         await sess.enqueueWrite(cmdReadRadeConfig(2))
         await sess.waitForText(/Done/i, 15_000)
@@ -461,8 +463,8 @@ export function bindAdvancedPage(): void {
           snap.firmwareMainVer || 30
         )
         const n = applyParsedAdvancedToForm(parsed)
-        if (n > 0) toast(`Filled ${n} setting group(s) from reply`)
-        else toast('Read finished — no parsed KEY: lines (check log below)')
+        if (n > 0) toast('Radar configuration read complete')
+        else toast('Read complete — no parsed KEY: lines (check log below)')
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Error'
         setPersistentError(msg)
@@ -472,16 +474,20 @@ export function bindAdvancedPage(): void {
   })
 
   document.getElementById('adv-save')?.addEventListener('click', () => {
+    if (!confirm('Save current radar configuration?')) return
     const snap = readAdvSnapshot()
     patchState({ deviceModel: snap.deviceModel, firmwareMainVer: snap.firmwareMainVer })
     runBle(async (s) => {
+      toast('Saving radar configuration...')
       const cmds = buildAdvancedSaveCommands(snap)
       try {
         const res = await runQueueWithFirmwareDiagnostics(s, cmds, 8000)
         if (res.warnings.length > 0) {
           const msg = res.warnings.map((w) => w.message).join('\n')
           setPersistentError(msg)
-          toast('Saved with firmware guardrail warning(s)', false)
+          toast('Save completed with firmware guardrail warning(s)', false)
+        } else {
+          toast('Radar configuration save complete')
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Save failed'
