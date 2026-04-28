@@ -238,6 +238,13 @@ export function pageAdvancedHtml(): string {
         <button type="button" class="btn btn-ghost" id="adv-clear-rx">Clear log</button>
       </div>
       <pre class="card code-out tall" id="adv-rx"></pre>
+      <div class="card">
+        <div class="row between card-head-row">
+          <h2 class="card-title tight">Last error</h2>
+          <button type="button" class="btn btn-ghost tight" id="adv-copy-last-error">Copy</button>
+        </div>
+        <pre class="code-out" id="adv-last-error">—</pre>
+      </div>
     </section>
   `
 }
@@ -389,6 +396,21 @@ function consumePendingAdvancedParse(): void {
 }
 
 export function bindAdvancedPage(): void {
+  const setPersistentError = (msg: string): void => {
+    const pre = document.getElementById('adv-last-error')
+    if (!pre) return
+    pre.textContent = `[${new Date().toLocaleString()}] ${msg}`
+  }
+  document.getElementById('adv-copy-last-error')?.addEventListener('click', async () => {
+    try {
+      const txt = document.getElementById('adv-last-error')?.textContent || ''
+      await navigator.clipboard.writeText(txt)
+      toast('Error copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
+  })
+
   consumePendingAdvancedParse()
   bindSegGroup('[data-adv-judge]')
   bindSegGroup('[data-adv-pass]')
@@ -454,7 +476,9 @@ export function bindAdvancedPage(): void {
         if (n > 0) toast(`Filled ${n} setting group(s) from reply`)
         else toast('Read finished — no parsed KEY: lines (check log below)')
       } catch (e) {
-        toast(e instanceof Error ? e.message : 'Error', false)
+        const msg = e instanceof Error ? e.message : 'Error'
+        setPersistentError(msg)
+        toast(msg, false)
       }
     })()
   })
@@ -464,7 +488,13 @@ export function bindAdvancedPage(): void {
     patchState({ deviceModel: snap.deviceModel, firmwareMainVer: snap.firmwareMainVer })
     runBle(async (s) => {
       const cmds = buildAdvancedSaveCommands(snap)
-      await runQueueWithDiagnostics(s, cmds)
+      try {
+        await runQueueWithDiagnostics(s, cmds)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Save failed'
+        setPersistentError(msg)
+        throw e
+      }
     })
   })
 

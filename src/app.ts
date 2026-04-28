@@ -380,6 +380,13 @@ function pageConfigure(): string {
         <p class="hint">${collapseHelpWs(configure.liveLog)}</p>
         <pre class="code-out tall" id="ble-rx" aria-live="polite">—</pre>
       </div>
+      <div class="card">
+        <div class="row between card-head-row">
+          <h2 class="card-title tight">Last error</h2>
+          <button type="button" class="btn btn-ghost tight" id="btn-copy-last-error">Copy</button>
+        </div>
+        <pre class="code-out" id="cfg-last-error">—</pre>
+      </div>
     </section>
   `
 }
@@ -740,6 +747,22 @@ function bindConfigure(): void {
   near?.addEventListener('input', updNear)
   updNear()
 
+  const setPersistentError = (msg: string): void => {
+    const pre = document.getElementById('cfg-last-error')
+    if (!pre) return
+    pre.textContent = `[${new Date().toLocaleString()}] ${msg}`
+  }
+
+  document.getElementById('btn-copy-last-error')?.addEventListener('click', async () => {
+    try {
+      const txt = document.getElementById('cfg-last-error')?.textContent || ''
+      await navigator.clipboard.writeText(txt)
+      toast('Error copied')
+    } catch {
+      toast('Clipboard blocked', false)
+    }
+  })
+
   document.getElementById('btn-clear-rx')?.addEventListener('click', () => {
     getActiveSession()?.clearRxLog()
     const pre = document.getElementById('ble-rx')
@@ -756,7 +779,9 @@ function bindConfigure(): void {
       await fn(s)
       toast('Done')
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'BLE error', false)
+      const msg = e instanceof Error ? e.message : 'BLE error'
+      setPersistentError(msg)
+      toast(msg, false)
     }
   }
 
@@ -814,12 +839,16 @@ function bindConfigure(): void {
         await s.waitForText(/Done|Error\s*-?\d*/i, 6000).catch(() => {})
         const rx = s.rxLog
         if (/Error\s*-?\d*/i.test(rx)) {
-          toast('Sync time rejected by device (Error -1). This firmware may not support SetParas 10 2.', false)
+          const msg = 'Sync time rejected by device (Error -1). This firmware may not support SetParas 10 2.'
+          setPersistentError(msg)
+          toast(msg, false)
           return
         }
         toast('Time sync command sent')
       } catch (e) {
-        toast(e instanceof Error ? e.message : 'BLE error', false)
+        const msg = e instanceof Error ? e.message : 'BLE error'
+        setPersistentError(msg)
+        toast(msg, false)
       }
     })()
   })
