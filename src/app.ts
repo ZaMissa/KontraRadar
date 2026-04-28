@@ -12,6 +12,7 @@ import {
   syncTimeCommand,
   levelPresetForIndex,
 } from './protocol'
+import { cmdSetDetSensitivity, computeDetSensitivityO } from './n1-commands'
 import { parseReadRadeConfigToConfigure, type ParsedConfigureForm } from './parse-read-config'
 import { toast } from './toast'
 import {
@@ -838,18 +839,61 @@ function bindConfigure(): void {
           }
         }
 
-        if (appliedFallbackIndex == null) throw e
-        const appliedToken = LEVEL_CODES[appliedFallbackIndex - 1]!
-        const operatorMsg =
-          `Sensitivity tier ${form.levelIndex} was rejected by firmware (Error -1). ` +
-          `Fallback tier ${appliedFallbackIndex} applied (${appliedToken}).`
-        setPersistentError(operatorMsg)
-        toast('Saved with fallback sensitivity tier', false)
-        const rng = document.getElementById('rng-level') as HTMLInputElement | null
-        if (rng) {
-          rng.value = String(appliedFallbackIndex)
-          rng.dispatchEvent(new Event('input'))
+        if (appliedFallbackIndex != null) {
+          const appliedToken = LEVEL_CODES[appliedFallbackIndex - 1]!
+          const operatorMsg =
+            `Sensitivity tier ${form.levelIndex} was rejected by firmware (Error -1). ` +
+            `Fallback tier ${appliedFallbackIndex} applied (${appliedToken}).`
+          setPersistentError(operatorMsg)
+          toast('Saved with fallback sensitivity tier', false)
+          const rng = document.getElementById('rng-level') as HTMLInputElement | null
+          if (rng) {
+            rng.value = String(appliedFallbackIndex)
+            rng.dispatchEvent(new Event('input'))
+          }
+          return
         }
+
+        // Alternate firmware family: sensitivity accepted via SetDetSensitivity, not SetParas 4 2.
+        const st = getState()
+        const model = st.deviceModel || 'BR7901A'
+        const fwMain = st.firmwareMainVer || 30
+        let detAppliedIndex: number | null = null
+        for (let idx = form.levelIndex; idx >= 1; idx--) {
+          const token = LEVEL_CODES[idx - 1]!
+          const o = computeDetSensitivityO(1, model, fwMain)
+          const detCmd = cmdSetDetSensitivity(token, o)
+          try {
+            await runQueueWithFirmwareDiagnostics(s, [detCmd], 7000)
+            detAppliedIndex = idx
+            break
+          } catch (detErr) {
+            const detMsg = detErr instanceof Error ? detErr.message : ''
+            const stillRejected = detMsg.includes('SetDetSensitivity') && detMsg.includes('(Error -1')
+            if (!stillRejected) throw detErr
+          }
+        }
+
+        if (detAppliedIndex != null) {
+          const appliedToken = LEVEL_CODES[detAppliedIndex - 1]!
+          const operatorMsg =
+            `SetParas sensitivity opcode is rejected on this firmware (Error -1). ` +
+            `Applied sensitivity via SetDetSensitivity using tier ${detAppliedIndex} (${appliedToken}).`
+          setPersistentError(operatorMsg)
+          toast('Saved with alternate sensitivity opcode', false)
+          const rng = document.getElementById('rng-level') as HTMLInputElement | null
+          if (rng) {
+            rng.value = String(detAppliedIndex)
+            rng.dispatchEvent(new Event('input'))
+          }
+          return
+        }
+
+        const partialMsg =
+          'Layout settings were sent, but firmware rejected all known sensitivity opcodes (Error -1). ' +
+          'Sensitivity likely unchanged on device.'
+        setPersistentError(partialMsg)
+        toast('Saved except sensitivity (firmware rejected opcode)', false)
       }
     })
   })
